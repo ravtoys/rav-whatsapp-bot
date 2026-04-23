@@ -4,199 +4,267 @@ const axios = require("axios");
 const app = express();
 app.use(express.json());
 
-// ─── CONFIG ──────────────────────────────────────────────────────────────────
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "rav_toys_webhook_2026";
 const WA_TOKEN = process.env.WA_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID || "999846293222612";
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const SHOPIFY_STORE = process.env.SHOPIFY_STORE || "ravtoys.com";
-// ─────────────────────────────────────────────────────────────────────────────
+const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN || "ravtoys.myshopify.com";
+const SHOPIFY_ADMIN_TOKEN = process.env.SHOPIFY_ADMIN_TOKEN;
 
-if (!WA_TOKEN) { console.error("❌ WA_TOKEN missing"); process.exit(1); }
-if (!ANTHROPIC_API_KEY) { console.error("❌ ANTHROPIC_API_KEY missing"); process.exit(1); }
+// TEMP - remove after token obtained
+const SHOPIFY_CLIENT_ID = "6322d0803bdff5c2e5f181b0da15726b";
+const SHOPIFY_CLIENT_SECRET = "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";
+
+if (!WA_TOKEN) { console.error("WA_TOKEN missing"); process.exit(1); }
+if (!ANTHROPIC_API_KEY) { console.error("ANTHROPIC_API_KEY missing"); process.exit(1); }
 
 const conversations = new Map();
 
-// ─── SYSTEM PROMPT ───────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `Eres "Rav", el asistente virtual de RAV Toys — tienda premium de juguetes en Medellín, Colombia.
+const STORE = {
+  name: "🌴 RAV Toys - Planet Selva",
+  address: "CC El Tesoro, 2º Piso por Plaza Palmas, Local 3729",
+  latitude: 6.19859,
+  longitude: -75.55812,
+};
 
-SOBRE RAV TOYS:
-- Tiendas físicas: Planet Selva (El Tesoro) y Planet Luna (Santafé)
-- Online: ravtoys.com
-- Horario: Lun–Sáb 10am–8pm | Dom 11am–7pm
-- Juguetes premium 0–12 años | Precios $15.000–$500.000 COP
+const SYSTEM_PROMPT = `Eres "Rav", asesor de RAV Toys (juguetería en Medellín). Tienda física: 🌴 Planet Selva (CC El Tesoro, Medellín). Catálogo online: ravtoys.com
 
-TU FORMA DE SER:
-- Cálido, cercano, como un amigo experto en juguetes
-- Llama a los niños "peques"
-- Respuestas cortas (máximo 4-5 líneas)
-- Emojis con moderación
-- Orienta hacia la compra o visita a tienda
+REGLAS DE TONO (CRÍTICAS):
+- Respuestas MUY cortas: máximo 1-2 líneas por mensaje
+- NUNCA expliques que somos "premium" ni describas la marca
+- Usa "peque" para referirte a los niños
+- Cercano pero directo
 
-HERRAMIENTA CLAVE — search_products:
-Úsala SIEMPRE que el cliente pregunte por productos, categorías, edades, o intereses. No inventes productos, precios o disponibilidad. Si busca "algo para una niña de 5 años que le gustan las princesas", busca con términos como "princesa", "muñeca", etc.
+MANEJO DE PRODUCTOS:
+- SIEMPRE usa search_products cuando el cliente quiera algo. NUNCA inventes productos.
+- Después de buscar, usa send_product_card para enviar 1-3 opciones. Cada tarjeta envía imagen + nombre + precio + link.
+- NO listes productos en texto. Siempre usa send_product_card.
+- Tras las tarjetas: "¿Te gusta alguno? ¿O busco algo diferente?"
 
-CUANDO RECOMIENDES PRODUCTOS REALES:
-- Menciona el NOMBRE exacto del producto que retornó la búsqueda
-- Da el PRECIO exacto en pesos colombianos
-- Si la API devuelve un link (url), compártelo para que compren
-- Si no hay resultados, sugiere alternativas o preguntarle más sobre intereses
+PERSISTENCIA DE VENTA:
+- Si NO le gusta: vuelve a buscar con términos distintos. NO te rindas.
+- Solo sugiere visitar la tienda tras 2-3 intentos fallidos.
 
-CUANDO QUIERAN HABLAR CON EL EQUIPO:
-- Di que en un momento los contacta alguien
-- No des emails ni teléfonos
+UBICACIÓN:
+- Si preguntan dónde están → usa send_store_location.
 
-IMPORTANTE:
-- Jamás inventes un producto que no venga de search_products
-- Si no sabes stock exacto, di "consultemos disponibilidad" o sugiere que revisen en ravtoys.com
-- Si la pregunta no es sobre juguetes, redirige amablemente`;
+HORARIOS: Lunes a Sábado 10am-8pm, Domingos 11am-7pm
 
-// ─── TOOL DEFINITIONS ────────────────────────────────────────────────────────
+NOTAS DE VOZ: "No puedo escuchar tu nota de voz 😊 ¿Me escribes qué buscas?"
+
+NO INVENTES nada: ni precios, ni productos, ni stock.`;
+
 const TOOLS = [
   {
     name: "search_products",
-    description: "Busca productos reales en el catálogo de RAV Toys (ravtoys.com). Úsala cuando el cliente pregunte por productos, categorías, edades, o intereses específicos (ej: 'muñecas', 'carros', 'bebé', 'juegos educativos'). Retorna título, precio, link al producto, imagen, y tags.",
+    description: "Busca productos en el catálogo de RAV Toys en Shopify. Úsalo SIEMPRE que el cliente pregunte por productos.",
     input_schema: {
       type: "object",
       properties: {
-        query: {
-          type: "string",
-          description: "Término de búsqueda en español. Usa términos simples y amplios como 'muñeca', 'carro', 'bebé', 'lego'. Evita frases largas."
-        },
-        limit: {
-          type: "integer",
-          description: "Cuántos productos retornar (máximo 5, default 3)",
-          default: 3
-        }
+        query: { type: "string", description: "Términos de búsqueda cortos (2-4 palabras)." }
       },
       required: ["query"]
     }
+  },
+  {
+    name: "send_product_card",
+    description: "Envía una tarjeta con imagen + nombre + precio + link. Úsalo después de search_products. Cada llamada envía UN producto.",
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        price: { type: "string" },
+        image_url: { type: "string" },
+        product_url: { type: "string" }
+      },
+      required: ["title", "price", "image_url", "product_url"]
+    }
+  },
+  {
+    name: "send_store_location",
+    description: "Envía ubicación de Planet Selva en mapa de WhatsApp.",
+    input_schema: { type: "object", properties: {}, required: [] }
   }
 ];
 
-// ─── SHOPIFY SEARCH ──────────────────────────────────────────────────────────
-async function searchProducts(query, limit = 3) {
-  try {
-    const url = `https://${SHOPIFY_STORE}/search/suggest.json?q=${encodeURIComponent(query)}&resources[type]=product&resources[limit]=${limit}`;
-    const r = await axios.get(url, { timeout: 10000 });
-    const products = r.data?.resources?.results?.products || [];
-
-    if (products.length === 0) {
-      return { found: 0, message: `No se encontraron productos para "${query}". Sugiere al cliente probar con otros términos o visitar ravtoys.com.` };
+async function searchShopifyProducts(query) {
+  if (!SHOPIFY_ADMIN_TOKEN) return { error: "Shopify not configured", products: [] };
+  const graphqlQuery = `query searchProducts($query: String!) {
+    products(first: 5, query: $query) {
+      edges {
+        node {
+          title handle description productType totalInventory
+          priceRangeV2 {
+            minVariantPrice { amount currencyCode }
+            maxVariantPrice { amount currencyCode }
+          }
+          featuredImage { url }
+        }
+      }
     }
-
-    const simplified = products.map(p => ({
-      title: p.title,
-      price: p.price ? `$${Number(p.price).toLocaleString('es-CO')} COP` : 'Consultar',
-      url: `https://${SHOPIFY_STORE}${p.url}`,
-      type: p.product_type,
-      vendor: p.vendor,
-      image: p.image
-    }));
-
-    return { found: simplified.length, products: simplified };
+  }`;
+  try {
+    const response = await axios.post(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/2025-01/graphql.json`,
+      { query: graphqlQuery, variables: { query } },
+      { headers: { "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN, "Content-Type": "application/json" }, timeout: 10000 }
+    );
+    if (response.data.errors) {
+      console.error("Shopify errors:", response.data.errors);
+      return { error: "GraphQL error", products: [] };
+    }
+    const products = response.data.data.products.edges.map(edge => {
+      const p = edge.node;
+      const minPrice = p.priceRangeV2.minVariantPrice;
+      const maxPrice = p.priceRangeV2.maxVariantPrice;
+      const priceStr = minPrice.amount === maxPrice.amount
+        ? `$${Math.round(minPrice.amount).toLocaleString("es-CO")} ${minPrice.currencyCode}`
+        : `$${Math.round(minPrice.amount).toLocaleString("es-CO")} - $${Math.round(maxPrice.amount).toLocaleString("es-CO")} ${minPrice.currencyCode}`;
+      return {
+        title: p.title,
+        description: (p.description || "").slice(0, 150),
+        price: priceStr,
+        product_url: `https://ravtoys.com/products/${p.handle}`,
+        image_url: p.featuredImage?.url || "",
+        available: (p.totalInventory ?? 0) > 0,
+        stock: p.totalInventory,
+      };
+    });
+    return { products, count: products.length };
   } catch (err) {
-    console.error(`❌ Shopify search error:`, err.message);
-    return { found: 0, error: "Error consultando catálogo. Sugiere al cliente visitar ravtoys.com directamente." };
+    console.error("Shopify search error:", err.response?.data || err.message);
+    return { error: err.message, products: [] };
   }
 }
 
-// ─── WHATSAPP SEND ───────────────────────────────────────────────────────────
-async function sendMessage(to, text) {
+async function sendText(to, text) {
   try {
     await axios.post(
       `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
-      { messaging_product: "whatsapp", to, type: "text", text: { body: text } },
+      { messaging_product: "whatsapp", to, type: "text", text: { body: text, preview_url: true } },
       { headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" } }
     );
-    console.log(`✅ Sent to ${to}`);
-  } catch (err) {
-    console.error(`❌ WA error:`, err.response?.data?.error || err.message);
-  }
+  } catch (err) { console.error("WA text error:", err.response?.data?.error || err.message); }
 }
 
-// ─── CLAUDE WITH TOOL USE ────────────────────────────────────────────────────
-async function askClaude(userId, userMessage) {
+async function sendImage(to, imageUrl, caption) {
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+      { messaging_product: "whatsapp", to, type: "image", image: { link: imageUrl, caption } },
+      { headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" } }
+    );
+    return true;
+  } catch (err) { console.error("WA image error:", err.response?.data?.error || err.message); return false; }
+}
+
+async function sendLocation(to, lat, lng, name, address) {
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+      { messaging_product: "whatsapp", to, type: "location", location: { latitude: lat, longitude: lng, name, address } },
+      { headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" } }
+    );
+  } catch (err) { console.error("WA location error:", err.response?.data?.error || err.message); }
+}
+
+async function executeSendProductCard(to, input) {
+  const caption = `*${input.title}*\n${input.price}\n${input.product_url}`;
+  const ok = await sendImage(to, input.image_url, caption);
+  if (!ok) await sendText(to, caption);
+  return { sent: true, title: input.title };
+}
+
+async function executeSendStoreLocation(to) {
+  await sendLocation(to, STORE.latitude, STORE.longitude, STORE.name, STORE.address);
+  return { sent: true };
+}
+
+async function handleConversation(userId, userMessage) {
   if (!conversations.has(userId)) conversations.set(userId, []);
   const history = conversations.get(userId);
   history.push({ role: "user", content: userMessage });
+  let workingHistory = history.slice(-10);
 
-  let messages = history.slice(-10);
-
-  const MAX_ITERATIONS = 5;
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
+  for (let iteration = 0; iteration < 5; iteration++) {
     try {
       const response = await axios.post(
         "https://api.anthropic.com/v1/messages",
         {
           model: "claude-haiku-4-5-20251001",
-          max_tokens: 1024,
+          max_tokens: 500,
           system: SYSTEM_PROMPT,
           tools: TOOLS,
-          messages: messages
+          messages: workingHistory,
         },
         {
-          headers: {
-            "x-api-key": ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json"
-          },
-          timeout: 30000
+          headers: { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+          timeout: 30000,
         }
       );
-
-      const { content, stop_reason } = response.data;
-      messages.push({ role: "assistant", content });
-
-      if (stop_reason === "tool_use") {
+      const stopReason = response.data.stop_reason;
+      const content = response.data.content;
+      if (stopReason === "tool_use") {
+        const toolUses = content.filter(c => c.type === "tool_use");
+        console.log(`Tools: ${toolUses.map(t => t.name).join(", ")}`);
+        workingHistory.push({ role: "assistant", content });
         const toolResults = [];
-        for (const block of content) {
-          if (block.type === "tool_use") {
-            console.log(`🔧 Claude calling tool: ${block.name}(${JSON.stringify(block.input)})`);
-            let result;
-            if (block.name === "search_products") {
-              result = await searchProducts(block.input.query, block.input.limit || 3);
-            } else {
-              result = { error: `Unknown tool: ${block.name}` };
-            }
-            toolResults.push({
-              type: "tool_result",
-              tool_use_id: block.id,
-              content: JSON.stringify(result)
-            });
-          }
+        for (const toolUse of toolUses) {
+          let result;
+          try {
+            if (toolUse.name === "search_products") {
+              result = await searchShopifyProducts(toolUse.input.query);
+            } else if (toolUse.name === "send_product_card") {
+              result = await executeSendProductCard(userId, toolUse.input);
+            } else if (toolUse.name === "send_store_location") {
+              result = await executeSendStoreLocation(userId);
+            } else { result = { error: "Unknown tool" }; }
+          } catch (e) { result = { error: e.message }; }
+          toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content: JSON.stringify(result) });
         }
-        messages.push({ role: "user", content: toolResults });
+        workingHistory.push({ role: "user", content: toolResults });
         continue;
       }
-
-      const textBlock = content.find(b => b.type === "text");
-      const reply = textBlock?.text || "Disculpa, no te entendí bien. ¿Puedes repetir?";
-
-      history.push({ role: "assistant", content: reply });
+      const textBlock = content.find(c => c.type === "text");
+      const reply = textBlock ? textBlock.text.trim() : "";
+      history.push({ role: "assistant", content: reply || "(sin texto)" });
       conversations.set(userId, history.slice(-10));
-
-      return reply;
+      if (reply) await sendText(userId, reply);
+      return;
     } catch (err) {
-      console.error(`❌ Claude error:`, err.response?.data || err.message);
-      return "Ups, tuve un problemita técnico 😅 ¿Puedes repetir tu mensaje?";
+      console.error("Claude error:", err.response?.data || err.message);
+      await sendText(userId, "Ups, problemita técnico 😅 ¿Puedes repetir?");
+      return;
     }
   }
-
-  return "Disculpa, estoy tardando en procesar tu solicitud. ¿Puedes intentar de nuevo?";
+  await sendText(userId, "Me enredé 😅 ¿Qué buscas exactamente?");
 }
 
-// ─── WEBHOOK ─────────────────────────────────────────────────────────────────
+// TEMP: OAuth exchange endpoint (remove after token)
+app.get("/oauth-exchange", async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.status(400).json({ error: "Missing code" });
+  try {
+    const r = await axios.post(
+      "https://ravtoys.myshopify.com/admin/oauth/access_token",
+      { client_id: SHOPIFY_CLIENT_ID, client_secret: SHOPIFY_CLIENT_SECRET, code: code },
+      { headers: { "Content-Type": "application/json" } }
+    );
+    console.log("SHOPIFY_ACCESS_TOKEN:", r.data.access_token);
+    res.json(r.data);
+  } catch (err) {
+    console.error("OAuth error:", err.response?.data || err.message);
+    res.status(500).json({ error: err.response?.data || err.message });
+  }
+});
+
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    console.log("✅ Webhook verified");
     res.status(200).send(challenge);
-  } else {
-    res.sendStatus(403);
-  }
+  } else { res.sendStatus(403); }
 });
 
 app.post("/webhook", async (req, res) => {
@@ -212,27 +280,22 @@ app.post("/webhook", async (req, res) => {
     const type = message.type;
     if (type === "text") {
       const text = message.text.body;
-      console.log(`📩 From ${from}: ${text}`);
-      const reply = await askClaude(from, text);
-      await sendMessage(from, reply);
+      console.log(`From ${from}: ${text}`);
+      await handleConversation(from, text);
+    } else if (type === "audio" || type === "voice") {
+      await sendText(from, "No puedo escuchar tu nota de voz 😊 ¿Me escribes qué buscas?");
     } else {
-      console.log(`📎 From ${from}: [${type}]`);
-      await sendMessage(from, "Solo puedo leer mensajes de texto por ahora 😊 ¿En qué te puedo ayudar?");
+      await sendText(from, "Solo puedo leer texto por ahora 😊 ¿En qué te ayudo?");
     }
-  } catch (err) {
-    console.error("Error processing message:", err);
-  }
+  } catch (err) { console.error("Error:", err); }
 });
 
-app.get("/", (req, res) => {
-  res.send("RAV Toys WhatsApp Bot 🚀 (Claude + Shopify)");
-});
+app.get("/", (req, res) => { res.send("RAV Toys WhatsApp Bot v3"); });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🤖 RAV Toys Bot (Claude + Shopify) running on port ${PORT}`);
-  console.log(`📱 Phone ID: ${PHONE_NUMBER_ID}`);
-  console.log(`🔑 WA Token: ${WA_TOKEN ? "✅" : "❌"}`);
-  console.log(`🧠 Anthropic: ${ANTHROPIC_API_KEY ? "✅" : "❌"}`);
-  console.log(`🛒 Shopify Store: ${SHOPIFY_STORE}`);
+  console.log(`RAV Toys Bot v3 on port ${PORT}`);
+  console.log(`WA: ${WA_TOKEN ? "OK" : "FAIL"}`);
+  console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "FAIL"}`);
+  console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK" : "PENDING"}`);
 });
