@@ -11,17 +11,19 @@ const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID || "999846293222612";
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN || "ravtoys.myshopify.com";
 const SHOPIFY_ADMIN_TOKEN = process.env.SHOPIFY_ADMIN_TOKEN;
-// Notificaciones: teléfonos separados por coma, sin +, con código país. Ej: "573013507371,573001234567"
 const NOTIFICATION_PHONES = (process.env.NOTIFICATION_PHONES || "573013507371").split(",").map(s => s.trim()).filter(Boolean);
 // ─────────────────────────────────────────────────────────────────────────────────
 
 if (!WA_TOKEN) { console.error("WA_TOKEN missing"); process.exit(1); }
 if (!ANTHROPIC_API_KEY) { console.error("ANTHROPIC_API_KEY missing"); process.exit(1); }
 
-// Estado por cliente en memoria
-const conversations = new Map();      // userId -> [ { role, content } ]
-const humanHandoff = new Set();       // userIds cuyo chat pasó a humano (bot no responde)
-const checkouts = new Map();          // userId -> { step, data }
+// ESTADO POR USUARIO
+const conversations = new Map();         // userId -> [ { role, content } ]
+const humanHandoff = new Set();          // userIds cuyo chat pasó a humano
+const lastSearchResults = new Map();     // userId -> [ productos ]
+const checkouts = new Map();             // userId -> { product, data: { nombre, cedula, direccion, telefono, metodo_pago } }
+
+const CHECKOUT_FIELDS = ["nombre", "cedula", "direccion", "telefono", "metodo_pago"];
 
 const STORE = {
   name: "🌴 RAV Toys – Planet Selva",
@@ -66,53 +68,73 @@ TONO:
 - Usas "peque" para los niños.
 - Cercano, chévere, entusiasta. Vendedor TOP, nunca pasivo.
 
-CÓMO BUSCAR Y MOSTRAR PRODUCTOS:
-1. Llama search_products con términos cortos (2-4 palabras).
-2. Si hay resultados, llama send_product_card 1-3 veces (una por producto) con los datos EXACTOS que devolvió search_products. NO inventes ni cambies título, precio, image_url o product_url.
-3. Después un texto corto con gancho: "¡Tengo estas joyas! ¿Cuál te late?"
-4. NUNCA listes productos en texto. Van siempre en tarjetas.
+PRODUCTOS:
+- Llama search_products con términos cortos (2-4 palabras).
+- Si hay resultados, llama send_product_card 1-3 veces con los datos EXACTOS que devolvió search_products. NO inventes.
+- Mensaje corto con gancho: "¡Tengo estas joyas! ¿Cuál te late?"
+- Nunca listes productos en texto. Van siempre en tarjetas.
 
 SI NO HAY MATCH (0 resultados):
-- Busca otra cosa con términos distintos (varía categoría, edad, marca, estilo). Mínimo 3-4 intentos antes de ceder.
-- NO mandes al cliente a la tienda física como solución.
-- Solo como último recurso: usa request_human_handoff para conectarlo con el equipo.
+- Busca otra cosa con términos distintos. Mínimo 3-4 intentos antes de ceder.
+- NO mandes al cliente a la tienda.
+- Último recurso: request_human_handoff.
 
 UBICACIÓN:
-- Usa send_store_location SOLO si preguntan explícitamente dónde están, dirección o cómo llegar.
+- send_store_location SOLO si preguntan explícitamente por dirección o cómo llegar.
 
-MEDIOS DE PAGO:
-- Si preguntan "cómo pago", "formas de pago", "transferencia", "contraentrega", "con tarjeta", etc. → usa send_payment_info.
+MEDIOS DE PAGO (info general):
+- send_payment_info cuando preguntan cómo pagar fuera del checkout.
 
-GARANTÍAS Y CAMBIOS:
-- Si mencionan producto dañado, defectuoso, quieren cambio, devolución, garantía → usa send_warranty_info.
-- Luego personaliza según el caso: cambio de opinión (5 días hábiles) vs defecto de fábrica (30 días). Sé breve y amable.
-- Si necesitan atención humana para garantía → usa request_human_handoff.
+GARANTÍAS:
+- send_warranty_info cuando mencionan producto dañado, cambio o devolución.
 
-CIERRE DE VENTA (MUY IMPORTANTE):
-Cuando el cliente diga "lo quiero", "me lo llevo", "cómo lo compro", "hagamos el pedido" o similar:
-1. Confirma producto y precio: "¡Perfecto! [producto] por [precio] 🎉"
-2. Llama start_checkout con collect_field="nombre" para pedir nombre completo.
-3. Luego con collect_field="cedula" (SIEMPRE pides cédula).
-4. Luego collect_field="direccion" (dirección + ciudad).
-5. Luego collect_field="telefono" (si el cliente ya te da WhatsApp está bien, pero confirma).
-6. Llama send_payment_info para mostrar métodos.
-7. Cuando el cliente elija método → llama start_checkout con collect_field="metodo_pago" y guarda la elección.
-8. Llama send_payment_link con el método elegido.
-9. Cuando el cliente confirme que pagó (dice "ya pagué", "listo", envía comprobante):
-   → Llama notify_sale_team con todos los datos.
-   → Llama request_human_handoff para que Eliana tome el control.
+═══════════════════════════════════════
+CIERRE DE VENTA (FLUJO ESTRICTO)
+═══════════════════════════════════════
+Cuando el cliente indique que quiere comprar ("lo quiero", "me lo llevo", "hagamos el pedido", "cómo lo compro"):
 
-NUNCA saltes pasos del checkout. La cédula es SIEMPRE obligatoria.
+PASO 1 — SELECCIONAR PRODUCTO:
+  Llama select_product_for_purchase con el product_url EXACTO del producto elegido (debe ser un product_url que apareció en search_products previo).
+  El sistema confirma el producto Y SU PRECIO REAL. TÚ NO DECIDES EL PRECIO. Si el cliente pregunta cuánto, mira el precio de la tarjeta enviada.
+
+PASO 2 — RECOGER DATOS (uno por uno):
+  Pides el dato, esperas la respuesta del cliente, y llamas save_checkout_field con el valor EXACTO que escribió.
+  Orden OBLIGATORIO:
+  a) save_checkout_field(field="nombre", value="...") — nombre completo
+  b) save_checkout_field(field="cedula", value="...") — cédula
+  c) save_checkout_field(field="direccion", value="...") — dirección + ciudad
+  d) save_checkout_field(field="telefono", value="...") — teléfono de contacto
+
+  Nunca saltes un paso. La cédula es SIEMPRE obligatoria.
+
+PASO 3 — MOSTRAR MEDIOS DE PAGO:
+  Cuando los 4 datos estén guardados, llama send_payment_info.
+
+PASO 4 — GUARDAR MÉTODO ELEGIDO:
+  save_checkout_field(field="metodo_pago", value="<transferencia|wompi|contraentrega|addi|supay>")
+
+PASO 5 — ENVIAR INSTRUCCIONES DE PAGO:
+  send_payment_link(method="<transferencia|wompi|contraentrega|addi|supay>")
+  (El sistema usa el precio real del producto, tú no pasas monto)
+
+PASO 6 — CONFIRMACIÓN DE PAGO:
+  Cuando el cliente diga "ya pagué", "listo", "transferí" o envíe comprobante:
+  → notify_sale_team (sin argumentos, el sistema arma el resumen con los datos guardados)
+  → request_human_handoff(reason="venta_cerrada")
+
+Si save_checkout_field devuelve error por campo faltante, pide el campo que falta antes de seguir.
+
+═══════════════════════════════════════
 
 HUMANO DIRECTO:
-- Si piden hablar con asesor humano, persona, alguien del equipo → usa request_human_handoff inmediatamente.
+- Si piden hablar con asesor, persona, humano → request_human_handoff(reason="solicitud_cliente").
 
 HORARIOS (solo si preguntan): L-S 10am-8pm, D 11am-7pm.
 
 NOTAS DE VOZ:
 - Si mandan audio: "No puedo escuchar audio 😊 ¿Me escribes qué buscas?"
 
-NO INVENTES precios, productos, links, stock ni políticas.`;
+NUNCA INVENTES: precios, productos, links, stock, políticas, ni datos del cliente.`;
 
 const TOOLS = [
   {
@@ -121,62 +143,70 @@ const TOOLS = [
     input_schema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Términos cortos (2-4 palabras). Ejemplos: 'muñeca princesa', 'carro control remoto', 'lego 5 años'." }
+        query: { type: "string", description: "Términos cortos (2-4 palabras). Ej: 'muñeca princesa', 'carro control remoto'." }
       },
       required: ["query"]
     }
   },
   {
     name: "send_product_card",
-    description: "Envía UNA tarjeta con imagen + nombre + precio + link. Usa los datos EXACTOS que devolvió search_products. Llama esta tool 1-3 veces consecutivas (una por producto) antes de responder texto.",
+    description: "Envía UNA tarjeta con imagen + nombre + precio + link. Usa los datos EXACTOS que devolvió search_products. Llama 1-3 veces (una por producto) antes de responder texto.",
     input_schema: {
       type: "object",
       properties: {
-        title: { type: "string", description: "Título exacto" },
-        price: { type: "string", description: "Precio exacto" },
-        image_url: { type: "string", description: "URL imagen exacta" },
-        product_url: { type: "string", description: "URL producto exacta" }
+        title: { type: "string" },
+        price: { type: "string" },
+        image_url: { type: "string" },
+        product_url: { type: "string" }
       },
       required: ["title", "price", "image_url", "product_url"]
     }
   },
   {
     name: "send_store_location",
-    description: "Envía la ubicación de Planet Selva por mapa. SOLO cuando el cliente pregunta explícitamente por dirección, ubicación o cómo llegar.",
+    description: "Envía la ubicación de Planet Selva. SOLO si preguntan explícitamente por dirección, ubicación o cómo llegar.",
     input_schema: { type: "object", properties: {}, required: [] }
   },
   {
     name: "send_payment_info",
-    description: "Envía al cliente el mensaje con los medios de pago de RAV Toys (transferencia Bancolombia, Wompi, contraentrega, Addi/Sü Pay). Úsalo cuando pregunten cómo pagar o al iniciar el checkout.",
+    description: "Envía el mensaje con los 4 medios de pago. Úsalo cuando preguntan cómo pagar, o dentro del flujo de checkout después de recoger los datos del cliente.",
     input_schema: { type: "object", properties: {}, required: [] }
   },
   {
     name: "send_warranty_info",
-    description: "Envía el resumen de la política de garantías RAV Toys. Úsalo cuando mencionen producto dañado, cambio, devolución o pregunten por garantía.",
+    description: "Envía el resumen de garantías. Úsalo cuando mencionan producto dañado, cambio, devolución o garantía.",
     input_schema: { type: "object", properties: {}, required: [] }
   },
   {
-    name: "start_checkout",
-    description: "Gestiona el cierre de venta paso a paso. Cada llamada pide UN dato al cliente y lo guarda. Los pasos son: 'producto' (qué producto y precio), 'nombre', 'cedula', 'direccion', 'telefono', 'metodo_pago'. Llámalo secuencialmente a medida que el cliente responde.",
+    name: "select_product_for_purchase",
+    description: "Marca un producto como el elegido por el cliente para la compra. Debe ser un product_url que apareció en un search_products previo. El sistema guarda el producto con su precio REAL (no lo decide el modelo). Usa esta tool al inicio del flujo de checkout.",
     input_schema: {
       type: "object",
       properties: {
-        collect_field: {
-          type: "string",
-          enum: ["producto", "nombre", "cedula", "direccion", "telefono", "metodo_pago"],
-          description: "Qué campo vas a pedir/guardar ahora"
-        },
-        value: {
-          type: "string",
-          description: "Valor que el cliente acaba de dar para el campo anterior. En la primera llamada de un campo se omite (se pide el dato). En la siguiente llamada se pasa el valor recibido."
-        }
+        product_url: { type: "string", description: "product_url EXACTO del producto elegido (debe venir de un search_products previo)" }
       },
-      required: ["collect_field"]
+      required: ["product_url"]
+    }
+  },
+  {
+    name: "save_checkout_field",
+    description: "Guarda un campo específico del checkout con su valor. Llámalo después de que el cliente responda cada pregunta del flujo de cierre. Campos permitidos: nombre, cedula, direccion, telefono, metodo_pago.",
+    input_schema: {
+      type: "object",
+      properties: {
+        field: {
+          type: "string",
+          enum: ["nombre", "cedula", "direccion", "telefono", "metodo_pago"],
+          description: "Cuál campo estás guardando"
+        },
+        value: { type: "string", description: "El valor EXACTO que escribió el cliente (sin cambios, ni resumen)" }
+      },
+      required: ["field", "value"]
     }
   },
   {
     name: "send_payment_link",
-    description: "Envía al cliente las instrucciones/link del método de pago elegido. Úsalo después de que el cliente elija método en el checkout.",
+    description: "Envía al cliente las instrucciones del método de pago. El sistema usa el precio REAL del producto seleccionado (NO pasas monto, el backend lo calcula).",
     input_schema: {
       type: "object",
       properties: {
@@ -184,38 +214,25 @@ const TOOLS = [
           type: "string",
           enum: ["transferencia", "wompi", "contraentrega", "addi", "supay"],
           description: "Método elegido por el cliente"
-        },
-        amount: {
-          type: "string",
-          description: "Monto total de la compra, ej: '$249.900 COP'"
         }
       },
-      required: ["method", "amount"]
+      required: ["method"]
     }
   },
   {
     name: "notify_sale_team",
-    description: "Notifica al equipo RAV Toys (Santiago y Eliana) que hay una venta lista con todos los datos del pedido. Úsalo CUANDO el cliente confirme que pagó. Después llama request_human_handoff.",
-    input_schema: {
-      type: "object",
-      properties: {
-        summary: {
-          type: "string",
-          description: "Resumen del pedido con todos los datos: producto, precio, nombre, cédula, dirección, ciudad, teléfono, método de pago, estado."
-        }
-      },
-      required: ["summary"]
-    }
+    description: "Notifica al equipo RAV Toys que hay una venta lista. El sistema arma el resumen con los datos guardados en el checkout (producto, precio real, cliente). TÚ NO PASAS EL RESUMEN. Llámalo después de que el cliente confirme que pagó. Luego llama request_human_handoff.",
+    input_schema: { type: "object", properties: {}, required: [] }
   },
   {
     name: "request_human_handoff",
-    description: "Pasa la conversación a un humano del equipo RAV Toys. Úsalo cuando: (a) el cliente pida hablar con una persona, (b) después de notify_sale_team tras confirmar pago, (c) como último recurso cuando no puedas ayudar. Notifica a Santiago y Eliana, y detiene la respuesta del bot en esta conversación.",
+    description: "Pasa la conversación a un humano. Úsalo cuando: (a) el cliente pida hablar con una persona, (b) después de notify_sale_team, (c) último recurso cuando no puedas ayudar. Notifica al equipo y detiene el bot para este cliente.",
     input_schema: {
       type: "object",
       properties: {
         reason: {
           type: "string",
-          description: "Motivo del handoff: 'venta_cerrada', 'solicitud_cliente', 'caso_complejo', 'garantia', u otro."
+          description: "Motivo: 'venta_cerrada', 'solicitud_cliente', 'caso_complejo', 'garantia', etc."
         }
       },
       required: ["reason"]
@@ -266,13 +283,16 @@ async function searchShopifyProducts(query) {
       const p = edge.node;
       const minPrice = p.priceRangeV2.minVariantPrice;
       const maxPrice = p.priceRangeV2.maxVariantPrice;
+      const priceAmount = Math.round(parseFloat(minPrice.amount));
       const priceStr = minPrice.amount === maxPrice.amount
-        ? `$${Math.round(minPrice.amount).toLocaleString("es-CO")} ${minPrice.currencyCode}`
-        : `$${Math.round(minPrice.amount).toLocaleString("es-CO")} - $${Math.round(maxPrice.amount).toLocaleString("es-CO")} ${minPrice.currencyCode}`;
+        ? `$${priceAmount.toLocaleString("es-CO")} ${minPrice.currencyCode}`
+        : `$${priceAmount.toLocaleString("es-CO")} - $${Math.round(parseFloat(maxPrice.amount)).toLocaleString("es-CO")} ${minPrice.currencyCode}`;
       return {
         title: p.title,
         description: (p.description || "").slice(0, 150),
         price: priceStr,
+        price_amount: priceAmount,
+        currency: minPrice.currencyCode,
         product_url: `https://ravtoys.com/products/${p.handle}`,
         image_url: p.featuredImage?.url || "",
         available: (p.totalInventory ?? 0) > 0,
@@ -308,7 +328,6 @@ async function sendImage(to, imageUrl, caption) {
       { messaging_product: "whatsapp", to, type: "image", image: { link: imageUrl, caption } },
       { headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" } }
     );
-    console.log(`Image sent to ${to}`);
     return true;
   } catch (err) {
     console.error("WA image error:", err.response?.data?.error || err.message);
@@ -323,7 +342,6 @@ async function sendLocation(to, lat, lng, name, address) {
       { messaging_product: "whatsapp", to, type: "location", location: { latitude: lat, longitude: lng, name, address } },
       { headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" } }
     );
-    console.log(`Location sent to ${to}`);
   } catch (err) {
     console.error("WA location error:", err.response?.data?.error || err.message);
   }
@@ -338,10 +356,20 @@ async function notifyTeam(text) {
 
 // ─── EXECUTORS ───────────────────────────────────────────────────────────────
 
+async function executeSearchProducts(userId, input) {
+  const result = await searchShopifyProducts(input.query);
+  // Guardar productos mostrados al cliente
+  if (result.products && result.products.length > 0) {
+    lastSearchResults.set(userId, result.products);
+  }
+  return result;
+}
+
 async function executeSendProductCard(to, input) {
   const caption = `*${input.title}*\n${input.price}\n${input.product_url}`;
   const ok = await sendImage(to, input.image_url, caption);
   if (!ok) await sendText(to, caption);
+  console.log(`Card sent: ${input.title} @ ${input.price}`);
   return { sent: true, title: input.title };
 }
 
@@ -360,21 +388,56 @@ async function executeSendWarrantyInfo(to) {
   return { sent: true };
 }
 
-async function executeStartCheckout(to, input) {
-  if (!checkouts.has(to)) checkouts.set(to, { step: null, data: {} });
-  const state = checkouts.get(to);
-  // Guardar valor si vino (corresponde al campo del paso anterior que ya se pidió)
-  if (input.value && state.step) {
-    state.data[state.step] = input.value;
+async function executeSelectProductForPurchase(userId, input) {
+  const products = lastSearchResults.get(userId) || [];
+  const chosen = products.find(p => p.product_url === input.product_url);
+  if (!chosen) {
+    return {
+      error: "Producto no encontrado. Debes elegir un product_url que viene del último search_products. Haz un search_products primero si es necesario.",
+      available_urls: products.map(p => p.product_url)
+    };
   }
-  state.step = input.collect_field;
-  checkouts.set(to, state);
-  console.log(`Checkout [${to}]: step=${input.collect_field}, data=${JSON.stringify(state.data)}`);
-  return { step: input.collect_field, data: state.data, saved_previous: !!input.value };
+  if (!checkouts.has(userId)) checkouts.set(userId, { data: {} });
+  const state = checkouts.get(userId);
+  state.product = chosen;
+  checkouts.set(userId, state);
+  console.log(`[Checkout ${userId}] Product selected: ${chosen.title} @ ${chosen.price} (${chosen.price_amount} ${chosen.currency})`);
+  return {
+    selected: true,
+    title: chosen.title,
+    price: chosen.price,
+    available: chosen.available,
+    stock: chosen.stock
+  };
 }
 
-async function executeSendPaymentLink(to, input) {
-  const amount = input.amount || "el total de tu pedido";
+async function executeSaveCheckoutField(userId, input) {
+  if (!checkouts.has(userId)) checkouts.set(userId, { data: {} });
+  const state = checkouts.get(userId);
+  if (!state.data) state.data = {};
+  if (!state.product) {
+    return {
+      error: "No hay producto seleccionado. Primero llama select_product_for_purchase con el producto que el cliente quiere comprar."
+    };
+  }
+  state.data[input.field] = input.value;
+  checkouts.set(userId, state);
+  const missing = CHECKOUT_FIELDS.filter(f => !state.data[f]);
+  console.log(`[Checkout ${userId}] Saved ${input.field}=${input.value}. Missing: ${missing.join(",") || "none"}`);
+  return {
+    saved: input.field,
+    value: input.value,
+    missing_fields: missing,
+    complete: missing.length === 0
+  };
+}
+
+async function executeSendPaymentLink(userId, input) {
+  const state = checkouts.get(userId);
+  if (!state || !state.product) {
+    return { error: "No hay producto seleccionado. Llama select_product_for_purchase primero." };
+  }
+  const amount = state.product.price;
   let msg;
   switch (input.method) {
     case "transferencia":
@@ -395,30 +458,63 @@ async function executeSendPaymentLink(to, input) {
     default:
       msg = `Te paso los detalles de pago por aquí. Monto: ${amount}`;
   }
-  await sendText(to, msg);
-  return { sent: true, method: input.method };
+  await sendText(userId, msg);
+  console.log(`[Checkout ${userId}] Payment link sent: ${input.method} for ${amount}`);
+  return { sent: true, method: input.method, amount };
 }
 
-async function executeNotifyTeam(to, input) {
-  const header = `🚨 *Nueva venta cerrada*\nCliente WhatsApp: +${to}\n\n`;
-  await notifyTeam(header + input.summary);
+async function executeNotifyTeam(userId) {
+  const state = checkouts.get(userId);
+  if (!state || !state.product) {
+    return { error: "No hay checkout completo para notificar." };
+  }
+  const missing = CHECKOUT_FIELDS.filter(f => !state.data?.[f]);
+  if (missing.length > 0) {
+    return { error: "Faltan campos del cliente: " + missing.join(", ") + ". Pídelos antes de notificar al equipo." };
+  }
+  const d = state.data;
+  const p = state.product;
+  const summary = [
+    "🚨 *NUEVA VENTA CERRADA* 🎉",
+    "",
+    "📦 Producto: " + p.title,
+    "💰 Precio: " + p.price,
+    "🔗 " + p.product_url,
+    "",
+    "👤 *Datos del cliente*",
+    "Nombre: " + d.nombre,
+    "Cédula: " + d.cedula,
+    "Dirección: " + d.direccion,
+    "Teléfono: " + d.telefono,
+    "WhatsApp: +" + userId,
+    "",
+    "💳 Método de pago: " + d.metodo_pago,
+    "",
+    "Pendiente: confirmar pago y despachar pedido."
+  ].join("\n");
+  await notifyTeam(summary);
+  console.log(`[Checkout ${userId}] Team notified for sale of ${p.title}`);
   return { notified: true, team_size: NOTIFICATION_PHONES.length };
 }
 
-async function executeHumanHandoff(to, input) {
-  humanHandoff.add(to);
+async function executeHumanHandoff(userId, input) {
+  humanHandoff.add(userId);
   const reason = input.reason || "solicitud_cliente";
-  const notif = `🚨 *Handoff a humano*\nCliente: +${to}\nMotivo: ${reason}\n\nRevisa el chat en WhatsApp Business para continuar la conversación.`;
+  const state = checkouts.get(userId);
+  let notif = `🚨 *Handoff a humano*\nCliente: +${userId}\nMotivo: ${reason}\n\n`;
+  if (state?.product && reason !== "venta_cerrada") {
+    notif += `(Producto en checkout: ${state.product.title} @ ${state.product.price})\n\n`;
+  }
+  notif += "Toma el control en WhatsApp Business.";
   await notifyTeam(notif);
-  await sendText(to, "¡Listo! 🎉 Ya te conecté con alguien del equipo. Te escribirá en unos minutos por este mismo chat. 🙏");
-  console.log(`Handoff activated for ${to}, reason: ${reason}`);
+  await sendText(userId, "¡Listo! 🎉 Ya te conecté con alguien del equipo. Te escribirá en unos minutos por este mismo chat. 🙏");
+  console.log(`Handoff activated for ${userId}, reason: ${reason}`);
   return { handoff: true, bot_paused: true };
 }
 
 // ─── MAIN CONVERSATION LOOP ──────────────────────────────────────────────────
 
 async function handleConversation(userId, userMessage) {
-  // Si el cliente ya fue pasado a humano, bot no responde
   if (humanHandoff.has(userId)) {
     console.log(`[HANDOFF ACTIVE] Ignoring message from ${userId}`);
     return;
@@ -465,7 +561,7 @@ async function handleConversation(userId, userMessage) {
           try {
             switch (toolUse.name) {
               case "search_products":
-                result = await searchShopifyProducts(toolUse.input.query);
+                result = await executeSearchProducts(userId, toolUse.input);
                 console.log(`Search "${toolUse.input.query}": ${result.products?.length || 0} found`);
                 break;
               case "send_product_card":
@@ -480,14 +576,17 @@ async function handleConversation(userId, userMessage) {
               case "send_warranty_info":
                 result = await executeSendWarrantyInfo(userId);
                 break;
-              case "start_checkout":
-                result = await executeStartCheckout(userId, toolUse.input);
+              case "select_product_for_purchase":
+                result = await executeSelectProductForPurchase(userId, toolUse.input);
+                break;
+              case "save_checkout_field":
+                result = await executeSaveCheckoutField(userId, toolUse.input);
                 break;
               case "send_payment_link":
                 result = await executeSendPaymentLink(userId, toolUse.input);
                 break;
               case "notify_sale_team":
-                result = await executeNotifyTeam(userId, toolUse.input);
+                result = await executeNotifyTeam(userId);
                 break;
               case "request_human_handoff":
                 result = await executeHumanHandoff(userId, toolUse.input);
@@ -507,7 +606,6 @@ async function handleConversation(userId, userMessage) {
         }
         workingHistory.push({ role: "user", content: toolResults });
 
-        // Si el handoff se activó en esta iteración, no seguimos procesando
         if (humanHandoff.has(userId)) {
           conversations.set(userId, history.slice(-12));
           return;
@@ -537,7 +635,6 @@ app.get("/webhook", (req, res) => {
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    console.log("Webhook verified");
     res.status(200).send(challenge);
   } else {
     res.sendStatus(403);
@@ -566,7 +663,6 @@ app.post("/webhook", async (req, res) => {
         await sendText(from, "No puedo escuchar audio 😊 ¿Me escribes qué buscas?");
       }
     } else if (type === "image" || type === "document") {
-      // Comprobantes de pago: no respondemos, dejamos que el cliente escriba "ya pagué" y el flujo siga
       console.log(`From ${from}: [${type}] (possibly payment proof)`);
     } else {
       console.log(`From ${from}: [${type}]`);
@@ -581,7 +677,6 @@ app.post("/webhook", async (req, res) => {
 
 // ─── ADMIN ENDPOINTS ─────────────────────────────────────────────────────────
 
-// Reactivar bot para un cliente (cuando el humano terminó de atenderlo)
 app.get("/admin/release/:userId", (req, res) => {
   const userId = req.params.userId;
   const wasActive = humanHandoff.delete(userId);
@@ -589,21 +684,32 @@ app.get("/admin/release/:userId", (req, res) => {
   res.json({ ok: true, userId, wasInHandoff: wasActive });
 });
 
+app.get("/admin/reset-checkout/:userId", (req, res) => {
+  const userId = req.params.userId;
+  const had = checkouts.delete(userId);
+  res.json({ ok: true, userId, hadCheckout: had });
+});
+
 app.get("/admin/status", (req, res) => {
   res.json({
     activeHandoffs: [...humanHandoff],
-    activeCheckouts: [...checkouts.entries()].map(([k, v]) => ({ userId: k, ...v })),
+    activeCheckouts: [...checkouts.entries()].map(([k, v]) => ({
+      userId: k,
+      product: v.product?.title,
+      price: v.product?.price,
+      data: v.data
+    })),
     conversationCount: conversations.size,
   });
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v9 (Sonnet 4.5)");
+  res.send("RAV-Bot v10 (Sonnet 4.5, secure checkout)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v9 (Sonnet 4.5) running on port ${PORT}`);
+  console.log(`RAV-Bot v10 (Sonnet 4.5, secure checkout) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
