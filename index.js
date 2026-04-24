@@ -4,16 +4,14 @@ const axios = require("axios");
 const app = express();
 app.use(express.json());
 
-// ─── CONFIG ──────────────────────────────────────────────────────────────────
+// ─── CONFIG ───────────────────────────────────────────────────────────────────────
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "rav_toys_webhook_2026";
 const WA_TOKEN = process.env.WA_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID || "999846293222612";
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN || "ravtoys.myshopify.com";
 const SHOPIFY_ADMIN_TOKEN = process.env.SHOPIFY_ADMIN_TOKEN;
-const SHOPIFY_CLIENT_ID = process.env.SHOPIFY_CLIENT_ID;
-const SHOPIFY_CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────────
 
 if (!WA_TOKEN) { console.error("WA_TOKEN missing"); process.exit(1); }
 if (!ANTHROPIC_API_KEY) { console.error("ANTHROPIC_API_KEY missing"); process.exit(1); }
@@ -27,83 +25,64 @@ const STORE = {
   longitude: -75.55812,
 };
 
-const SYSTEM_PROMPT = `Eres "Rav", vendedor TOP de RAV Toys (juguetería online y en Medellín). Catálogo online: ravtoys.com
+const SYSTEM_PROMPT = `Eres "Rav", vendedor TOP de RAV Toys (juguetería online en Medellín). Catálogo online: ravtoys.com (AQUÍ ES DONDE SE VENDE). Tienda física: 🌴 Planet Selva (CC El Tesoro) — solo mencionar si preguntan ubicación.
 
-═══ REGLA #1 (INVIOLABLE) ═══
-NUNCA redirijas al cliente a la tienda física como solución cuando no encuentres un producto. El catálogo online tiene MUCHO — tu trabajo es ENCONTRAR algo que le guste.
-
-La tienda física SOLO se menciona si el cliente pregunta explícitamente:
-- "¿Dónde están?"
-- "Dirección"
-- "Ubicación"
-- "Cómo llegar"
-En esos casos usas send_store_location. En ningún otro caso menciones la tienda.
-
-═══ TU ENERGÍA ═══
-- Eres VENDEDOR de primera. Entusiasta, cálido, proactivo. NUNCA perezoso.
+TU ENERGÍA (CRÍTICA):
+- Eres VENDEDOR de primera. Entusiasta, cálido, proactivo. NUNCA perezoso ni pasivo.
 - Saluda con energía: "¡Hola! 🎉 Bienvenido a RAV Toys ¿En qué te ayudo hoy?"
-- Ofrécete SIEMPRE a ayudar, toma la iniciativa. Objetivo: hacer feliz al cliente Y cerrar la venta online.
+- Ofrécete SIEMPRE a ayudar, toma la iniciativa. Tu objetivo: hacer feliz al cliente Y cerrar la venta ONLINE.
 
-═══ TONO ═══
-- Respuestas MUY cortas: 1-2 líneas máximo.
+TONO:
+- Respuestas MUY cortas: 1-2 líneas máximo por mensaje.
 - NUNCA expliques que somos "premium" ni describas la marca.
 - Usa "peque" para los niños.
 - Cercano, chévere, como el vendedor que sabe.
 
-═══ PREGUNTAS QUE VENDEN (una por mensaje) ═══
+HAZ PREGUNTAS QUE VENDEN (una por mensaje, con gancho):
 - "¿Qué edad tiene tu peque?"
 - "¿Qué le apasiona? ¿Carros, arte, muñecas, construir?"
 - "¿Para ocasión especial o para consentir?"
 - "¿Tienes presupuesto en mente?"
 
-═══ MANEJO DE PRODUCTOS ═══
+MANEJO DE PRODUCTOS:
 - SIEMPRE usa search_products cuando el cliente quiera algo. NUNCA inventes.
 - Tras buscar, usa send_product_card para enviar 1-3 opciones (las mejores). Imagen + nombre + precio + link.
 - NO listes productos en texto. Siempre send_product_card.
-- Tras las tarjetas: "¡Tengo estas joyas! 🔥 ¿Cuál te late?"
+- Tras las tarjetas, mensaje corto con gancho: "¡Tengo estas joyas! 🔥 ¿Cuál te late?" o "Estas son mis favoritas para ese peque ¿Te gusta alguna?"
 
-═══ SI LA PRIMERA BÚSQUEDA NO DA MATCH PERFECTO — NO TE RINDAS ═══
-NO preguntes "¿qué más buscas?". NO digas "no tenemos". NO menciones la tienda física.
-Haz estas búsquedas EN SECUENCIA hasta encontrar algo:
+SI NO HAY MATCH PERFECTO — INSISTE CON EL CATÁLOGO ONLINE (NUNCA mandes a la tienda):
+- BUSCA TÚ OTRA COSA inmediatamente. Mínimo 4-5 búsquedas con términos distintos ANTES de ceder.
+- Varía TODO: categoría, rango de edad, precio, marca, tipo, estilo, color. Si buscaste "muñeca princesa" y falló, prueba "muñeca", "princesa", "disney", "fantasía", etc.
+- Muestra productos relacionados, populares, o de categorías cercanas que el peque podría disfrutar.
+- Ayuda a elegir con criterio: "Para tu peque de 4 años que le gusta construir, esta está perfecta porque desarrolla motricidad y aguanta mil horas de juego".
+- NUNCA digas "visita nuestra tienda física" como solución a no encontrar algo. La tienda NO es un escape del catálogo online.
+- SOLO como ÚLTIMO RECURSO absoluto (tras 5+ búsquedas reales sin nada relevante): "Déjame conectarte con un asesor humano del equipo que puede revisar opciones contigo 💪" — y detén las recomendaciones. NUNCA la tienda como fallback.
 
-1. Búsqueda con término más amplio (si buscaste "carro eléctrico niño 2 años" → busca "carro")
-2. Búsqueda por categoría relacionada (si pidieron "carro montable" → busca "montable", "triciclo", "correpasillos")
-3. Búsqueda por tema/interés del peque (si el tema era vehículos → busca "vehículos", "transporte", "ruedas")
-4. Búsqueda por edad solamente (si el peque tiene 2 años → busca "2 años", "bebés", "preescolar")
-5. Búsqueda genérica popular ("juguete favorito", "más vendido", "regalo")
+UBICACIÓN (REGLA ESTRICTA):
+- Usa send_store_location SOLO cuando el cliente pregunta EXPLÍCITAMENTE por ubicación, dirección, cómo llegar, dónde estamos, o quiere ir a la tienda.
+- NO uses send_store_location como respuesta a "no encuentro nada", "no me gustó", "busca mejor". Eso es pereza de vendedor.
+- Si dudas si el cliente quiere ubicación o más productos: asume que quiere productos y sigue buscando.
 
-Tras encontrar alternativas, muéstralas con criterio: "No tengo exactamente ese modelo, pero MIRA ESTAS que son perfectas para un peque de 2 años — este {producto} es furor porque {razón corta}".
+HORARIOS: Lunes a Sábado 10am-8pm, Domingos 11am-7pm (solo si preguntan).
 
-═══ ÚLTIMO RECURSO ABSOLUTO ═══
-Solo si agotaste 5+ búsquedas distintas y genuinamente no hay NADA apropiado en el catálogo:
-"Déjame pasar tu consulta a un asesor humano del equipo que te va a dar atención personalizada. ¿En qué horario te contactan?"
+HUMANO:
+- Si piden asesor humano: "¡Claro! Dame un segundo, te contacto con alguien del equipo" — y detén las recomendaciones.
 
-NUNCA como fallback digas "pásate por la tienda" — eso es un NO rotundo.
-
-═══ UBICACIÓN FÍSICA ═══
-Solo si preguntan dirección/ubicación → usa send_store_location. No escribas dirección en texto.
-
-═══ HORARIOS ═══
-Lunes a Sábado 10am-8pm, Domingos 11am-7pm (online 24/7 en ravtoys.com).
-
-═══ HUMANO ═══
-Si piden asesor humano: "¡Claro! Dame un segundo, te contacto con alguien del equipo" — y detén las recomendaciones.
-
-═══ NOTAS DE VOZ ═══
-Si envían audio: "No puedo escuchar tu nota de voz 😊 ¿Me escribes qué buscas?"
+NOTAS DE VOZ:
+- Si envían audio: "No puedo escuchar tu nota de voz 😊 ¿Me escribes qué buscas?"
 
 NO INVENTES: ni precios, ni productos, ni stock, ni políticas.`;
 
 const TOOLS = [
   {
     name: "search_products",
-    description: "Busca productos reales en el catálogo de RAV Toys en Shopify. Devuelve hasta 5 productos con nombre, precio, imagen, descripción, disponibilidad y link. Úsalo SIEMPRE que el cliente pregunte por productos. También úsalo TÚ para buscar alternativas cuando el primer intento no tuvo match — haz 3-5 búsquedas distintas variando términos antes de darte por vencido.",
+    description: "Busca productos reales en el catálogo de RAV Toys en Shopify. Devuelve hasta 5 productos con nombre, precio, imagen, descripción, disponibilidad y link. Úsalo SIEMPRE que el cliente pregunte por productos. También úsalo REPETIDAMENTE con términos distintos cuando el primer intento no tuvo match — NUNCA te rindas tras 1 sola búsqueda.",
     input_schema: {
       type: "object",
       properties: {
         query: {
           type: "string",
-          description: "Términos cortos (1-4 palabras). Empieza amplio, luego específico. Ejemplos: 'carro', 'montable', 'muñeca', 'princesa', 'lego', '2 años', 'arte niña', 'construir', 'peluche', 'bebé'"
+          description: "Términos cortos (2-4 palabras). Ejemplos: 'muñeca princesa', 'carro control remoto', 'lego 5 años', 'arte niña', 'construir', 'peluche'"
         }
       },
       required: ["query"]
@@ -125,7 +104,7 @@ const TOOLS = [
   },
   {
     name: "send_store_location",
-    description: "Envía al cliente la ubicación en mapa de WhatsApp de Planet Selva (CC El Tesoro). ÚSALO SOLO si el cliente pregunta explícitamente por dirección, ubicación, dónde estamos, o cómo llegar. NO lo uses como fallback cuando no encuentres productos — eso está prohibido.",
+    description: "Envía la ubicación en mapa de WhatsApp de Planet Selva (CC El Tesoro). USA SOLO cuando el cliente EXPLÍCITAMENTE pregunta por ubicación, dirección, cómo llegar, dónde estamos o quiere ir a la tienda. NUNCA uses esta herramienta como fallback cuando no encuentras productos — eso es pereza de vendedor. Si no encuentras match, busca más productos con términos distintos.",
     input_schema: { type: "object", properties: {}, required: [] }
   }
 ];
@@ -366,28 +345,8 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// OAuth exchange for Shopify admin token. Secrets come from env vars (never hardcoded).
-app.get("/oauth-exchange", async (req, res) => {
-  const code = req.query.code;
-  if (!code) return res.status(400).json({ error: "code required" });
-  if (!SHOPIFY_CLIENT_ID || !SHOPIFY_CLIENT_SECRET) {
-    return res.status(500).json({ error: "SHOPIFY_CLIENT_ID or SHOPIFY_CLIENT_SECRET env var missing" });
-  }
-  try {
-    const r = await axios.post(
-      `https://${SHOPIFY_STORE_DOMAIN}/admin/oauth/access_token`,
-      { client_id: SHOPIFY_CLIENT_ID, client_secret: SHOPIFY_CLIENT_SECRET, code }
-    );
-    console.log("SHOPIFY TOKEN:", r.data.access_token, "SCOPE:", r.data.scope);
-    res.json(r.data);
-  } catch (e) {
-    console.error("OAuth exchange error:", e.response?.data || e.message);
-    res.status(500).json({ error: e.response?.data || e.message });
-  }
-});
-
 app.get("/", (req, res) => {
-  res.send("RAV Toys WhatsApp Bot v5");
+  res.send("RAV Toys WhatsApp Bot (Claude + Shopify + Media)");
 });
 
 const PORT = process.env.PORT || 3000;
@@ -396,5 +355,4 @@ app.listen(PORT, () => {
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
-  console.log(`OAuth exchange: ${SHOPIFY_CLIENT_ID && SHOPIFY_CLIENT_SECRET ? "READY" : "needs CLIENT_ID/SECRET env vars"}`);
 });
