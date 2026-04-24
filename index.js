@@ -32,6 +32,8 @@ const STORE = {
   longitude: -75.55812,
 };
 
+const STORE_DIRECTIONS = "Estamos en el Parque Comercial El Tesoro en Medellín 🌴, sector Plaza Palmas, piso 2, Local 3729. Cerquita de Bancolombia, Ktronix, Valentina Bakery y H&M ✨ ¡Te esperamos!";
+
 const PAYMENT_INFO = `🏦 *Medios de pago RAV Toys*
 
 *1. Transferencia Bancolombia* 💳
@@ -80,7 +82,8 @@ SI NO HAY MATCH (0 resultados):
 - Último recurso: request_human_handoff.
 
 UBICACIÓN:
-- send_store_location SOLO si preguntan explícitamente por dirección o cómo llegar.
+- Si preguntan dónde están, dirección o ubicación → llama send_store_location (manda el mapa) Y ADEMÁS responde con este guión EXACTO (no inventes referencias): "Estamos en el Parque Comercial El Tesoro en Medellín 🌴, sector Plaza Palmas, piso 2, Local 3729. Cerquita de Bancolombia, Ktronix, Valentina Bakery y H&M ✨ ¡Te esperamos!"
+- Si preguntan por cómo llegar o direcciones, responde SOLO con el guión de arriba. NUNCA menciones otro centro comercial ni inventes ubicaciones.
 
 MEDIOS DE PAGO (info general):
 - send_payment_info cuando preguntan cómo pagar fuera del checkout.
@@ -129,7 +132,7 @@ Si save_checkout_field devuelve error por campo faltante, pide el campo que falt
 HUMANO DIRECTO:
 - Si piden hablar con asesor, persona, humano → request_human_handoff(reason="solicitud_cliente").
 
-HORARIOS (solo si preguntan): L-S 10am-8pm, D 11am-7pm.
+HORARIOS (solo si preguntan, responde con este formato cool): "🕐 *Nuestros horarios*\n\nDom–Mié: 11:00 am – 8:00 pm\nJue–Sáb: 10:00 am – 9:00 pm\nFestivos: horario de domingo (11am–8pm)\n\n¡Te esperamos! 🌴"
 
 NOTAS DE VOZ:
 - Si mandan audio: "No puedo escuchar audio 😊 ¿Me escribes qué buscas?"
@@ -350,11 +353,17 @@ async function sendLocation(to, lat, lng, name, address) {
   }
 }
 
-async function notifyTeam(text) {
+async function notifyTeam(text, excludePhone) {
+  let sent = 0;
   for (const phone of NOTIFICATION_PHONES) {
+    if (excludePhone && phone === excludePhone) {
+      console.log(`Skipped self-notification to ${phone} (is current customer)`);
+      continue;
+    }
     await sendText(phone, text);
+    sent++;
   }
-  console.log(`Notified team (${NOTIFICATION_PHONES.length} numbers)`);
+  console.log(`Notified team (${sent}/${NOTIFICATION_PHONES.length} numbers)`);
 }
 
 // ─── EXECUTORS ───────────────────────────────────────────────────────────────
@@ -495,7 +504,7 @@ async function executeNotifyTeam(userId) {
     "",
     "Pendiente: confirmar pago y despachar pedido."
   ].join("\n");
-  await notifyTeam(summary);
+  await notifyTeam(summary, userId);
   console.log(`[Checkout ${userId}] Team notified for sale of ${p.title}`);
   return { notified: true, team_size: NOTIFICATION_PHONES.length };
 }
@@ -509,7 +518,7 @@ async function executeHumanHandoff(userId, input) {
     notif += `(Producto en checkout: ${state.product.title} @ ${state.product.price})\n\n`;
   }
   notif += "Toma el control en WhatsApp Business.";
-  await notifyTeam(notif);
+  await notifyTeam(notif, userId);
   await sendText(userId, "¡Listo! 🎉 Ya te conecté con alguien del equipo. Te escribirá en unos minutos por este mismo chat. 🙏");
   console.log(`Handoff activated for ${userId}, reason: ${reason}`);
   return { handoff: true, bot_paused: true };
@@ -707,12 +716,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v10 (Sonnet 4.5, secure checkout)");
+  res.send("RAV-Bot v11 (Sonnet 4.5, notifications + location fix)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v10 (Sonnet 4.5, secure checkout) running on port ${PORT}`);
+  console.log(`RAV-Bot v11 (Sonnet 4.5, notifications + location fix) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
