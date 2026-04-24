@@ -301,7 +301,10 @@ async function searchShopifyProducts(query) {
       };
     });
 
-    return { products, count: products.length };
+    const inStock = products.filter(p => p.available && p.stock > 0);
+
+
+    return { products: inStock, count: inStock.length };
   } catch (err) {
     console.error("Shopify search error:", err.response?.data || err.message);
     return { error: err.message, products: [] };
