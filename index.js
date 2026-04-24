@@ -4,17 +4,14 @@ const axios = require("axios");
 const app = express();
 app.use(express.json());
 
-// ─── CONFIG ───────────────────────────────────────────────────────────────────────
+// ─── CONFIG ──────────────────────────────────────────────────────────────────
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "rav_toys_webhook_2026";
 const WA_TOKEN = process.env.WA_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID || "999846293222612";
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN || "ravtoys.myshopify.com";
 const SHOPIFY_ADMIN_TOKEN = process.env.SHOPIFY_ADMIN_TOKEN;
-// TEMP — remove after token obtained
-const SHOPIFY_CLIENT_ID = "6322d0803bdff5c2e5f181b0da15726b";
-const SHOPIFY_CLIENT_SECRET = "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";
-// ─────────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
 if (!WA_TOKEN) { console.error("WA_TOKEN missing"); process.exit(1); }
 if (!ANTHROPIC_API_KEY) { console.error("ANTHROPIC_API_KEY missing"); process.exit(1); }
@@ -343,29 +340,13 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// TEMP: OAuth exchange endpoint for Shopify token. Remove after deployment.
-app.get("/oauth-exchange", async (req, res) => {
-  const code = req.query.code;
-  if (!code) return res.status(400).json({ error: "code required" });
-  try {
-    const r = await axios.post(
-      `https://${SHOPIFY_STORE_DOMAIN}/admin/oauth/access_token`,
-      { client_id: SHOPIFY_CLIENT_ID, client_secret: SHOPIFY_CLIENT_SECRET, code }
-    );
-    console.log("SHOPIFY TOKEN:", r.data.access_token, "SCOPE:", r.data.scope);
-    res.json(r.data);
-  } catch (e) {
-    res.status(500).json({ error: e.response?.data || e.message });
-  }
-});
-
 app.get("/", (req, res) => {
   res.send("RAV Toys WhatsApp Bot (Claude + Shopify + Media)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV Toys Bot v3 running on port ${PORT}`);
+  console.log(`RAV Toys Bot v4 running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
