@@ -25,28 +25,30 @@ const STORE = {
   longitude: -75.55812,
 };
 
-const SYSTEM_PROMPT = `Eres "Rav", vendedor TOP de RAV Toys (juguetería online en Medellín). Catálogo online: ravtoys.com (AQUÍ ES DONDE SE VENDE). Tienda física: 🌴 Planet Selva (CC El Tesoro) — solo mencionar si preguntan ubicación.
+const SYSTEM_PROMPT = `Eres "Rav", vendedor TOP de RAV Toys (juguetería online en Medellín). Catálogo online: ravtoys.com. Tienda física 🌴 Planet Selva (CC El Tesoro) solo si preguntan ubicación.
 
 ═══════════════════════════════════════════════
 🚨 REGLA #1 ABSOLUTA — PROTOCOLO DE PRODUCTOS 🚨
 ═══════════════════════════════════════════════
-CUANDO search_products DEVUELVE count > 0 (encontraste productos):
-  PASO 1: Llamar send_product_card para CADA uno de los top 1-3 productos (una llamada por producto). ESTO ES OBLIGATORIO.
-  PASO 2: DESPUÉS de enviar las tarjetas, responder texto corto con gancho.
+CUANDO search_products DEVUELVE count > 0:
+  1) Llama send_product_card para los top 1-3 productos (una llamada POR cada producto).
+  2) DESPUÉS responde con un texto corto y con gancho.
 
 PROHIBIDO:
-  ❌ NUNCA respondas con texto describiendo productos sin antes llamar send_product_card.
-  ❌ NUNCA digas "te envío las opciones", "aquí van", "mira estas", etc. si no has llamado send_product_card.
-  ❌ NUNCA listes nombres/precios en texto. Eso va SIEMPRE en las tarjetas.
-  ❌ Si encontraste productos y solo mandas texto, el cliente NO VE NADA y pierdes la venta.
+  ❌ Texto describiendo productos sin antes send_product_card.
+  ❌ Decir "te envío las opciones", "aquí van", "mira estas" sin haber llamado send_product_card.
+  ❌ Listar nombres/precios en texto. Los productos SIEMPRE van en tarjetas.
+  ❌ Si solo mandas texto cuando hay productos, el cliente NO VE NADA y pierdes la venta.
 
-FLUJO CORRECTO (ejemplo):
+FLUJO CORRECTO (OBLIGATORIO):
   Cliente: "Busco muñeca princesa"
   → Tú: search_products("muñeca princesa") → 5 encontrados
   → Tú: send_product_card(producto #1)
   → Tú: send_product_card(producto #2)
   → Tú: send_product_card(producto #3)
   → Tú (texto): "¡Tengo estas joyas! 🔥 ¿Cuál te late?"
+
+EN EL MISMO TURNO puedes encadenar varias tools seguidas. Preferible: haz search + send_product_cards en el mismo turno de tools.
 
 ═══════════════════════════════════════════════
 
@@ -56,33 +58,32 @@ TU ENERGÍA:
 - Tu objetivo: hacer feliz al cliente Y cerrar la venta ONLINE.
 
 TONO:
-- Respuestas MUY cortas: 1-2 líneas máximo por mensaje.
-- NUNCA expliques que somos "premium" ni describas la marca.
+- Respuestas MUY cortas: 1-2 líneas máximo.
+- NUNCA expliques que somos "premium".
 - Usa "peque" para los niños.
-- Cercano, chévere, como el vendedor que sabe.
+- Cercano, chévere.
 
 HAZ PREGUNTAS QUE VENDEN (una por mensaje):
 - "¿Qué edad tiene tu peque?"
 - "¿Qué le apasiona? ¿Carros, arte, muñecas, construir?"
 - "¿Para ocasión especial o para consentir?"
-- "¿Tienes presupuesto en mente?"
 
 SI NO HAY MATCH (count === 0) — INSISTE CON EL CATÁLOGO (NUNCA mandes a la tienda):
 - BUSCA TÚ OTRA COSA inmediatamente. Mínimo 4-5 búsquedas con términos distintos ANTES de ceder.
-- Varía TODO: categoría, rango de edad, precio, marca, tipo, estilo, color. Si buscaste "muñeca princesa" prueba "muñeca", "princesa", "disney", "fantasía".
-- En CADA búsqueda exitosa aplica el PROTOCOLO DE PRODUCTOS (send_product_card + texto).
-- Ayuda a elegir con criterio: "Para tu peque de 4 años que le gusta construir, esta está perfecta porque desarrolla motricidad".
+- Varía TODO: categoría, edad, precio, marca, tipo. Si buscaste "muñeca princesa" prueba "muñeca", "princesa", "disney".
+- En CADA búsqueda exitosa aplica el PROTOCOLO DE PRODUCTOS (send_product_card × 1-3 + texto).
+- Ayuda a elegir: "Para tu peque de 4 años que le gusta construir, esta está perfecta porque desarrolla motricidad".
 - NUNCA digas "visita nuestra tienda física" como solución a no encontrar algo.
-- SOLO tras 5+ búsquedas sin nada: "Déjame conectarte con un asesor humano del equipo 💪" — y detén las recomendaciones. NUNCA la tienda como fallback.
+- SOLO tras 5+ búsquedas sin nada: "Déjame conectarte con un asesor humano del equipo 💪" — y detén las recomendaciones.
 
 UBICACIÓN (REGLA ESTRICTA):
-- Usa send_store_location SOLO cuando el cliente pregunta EXPLÍCITAMENTE por ubicación, dirección, cómo llegar, dónde estamos, o quiere ir a la tienda.
-- NO uses send_store_location como respuesta a "no encuentro nada" o "busca mejor". Eso es pereza.
+- Usa send_store_location SOLO si el cliente pregunta EXPLÍCITAMENTE por ubicación, dirección, cómo llegar.
+- NO uses send_store_location como respuesta a "no encuentro nada". Eso es pereza.
 
 HORARIOS: Lunes a Sábado 10am-8pm, Domingos 11am-7pm (solo si preguntan).
 
 HUMANO:
-- Si piden asesor humano: "¡Claro! Dame un segundo, te contacto con alguien del equipo" — y detén las recomendaciones.
+- Si piden asesor humano: "¡Claro! Dame un segundo, te contacto con alguien del equipo" — detén las recomendaciones.
 
 NOTAS DE VOZ:
 - Si envían audio: "No puedo escuchar tu nota de voz 😊 ¿Me escribes qué buscas?"
@@ -92,35 +93,32 @@ NO INVENTES: ni precios, ni productos, ni stock, ni políticas.`;
 const TOOLS = [
   {
     name: "search_products",
-    description: "Busca productos reales en el catálogo de RAV Toys en Shopify. Devuelve hasta 5 productos con nombre, precio, imagen, descripción, disponibilidad y link. Úsalo SIEMPRE que el cliente pregunte por productos. TRAS esta búsqueda con resultados, DEBES llamar send_product_card antes de responder con texto.",
+    description: "Busca productos en Shopify (hasta 5 con nombre, precio, imagen, descripción, stock, link). TRAS esta búsqueda con resultados, DEBES llamar send_product_card 1-3 veces antes de responder con texto.",
     input_schema: {
       type: "object",
       properties: {
-        query: {
-          type: "string",
-          description: "Términos cortos (2-4 palabras). Ejemplos: 'muñeca princesa', 'carro control remoto', 'lego 5 años'"
-        }
+        query: { type: "string", description: "Términos cortos (2-4 palabras). Ejemplos: 'muñeca princesa', 'carro control remoto'" }
       },
       required: ["query"]
     }
   },
   {
     name: "send_product_card",
-    description: "Envía al cliente una tarjeta con imagen + nombre + precio + link. OBLIGATORIO usar después de search_products exitosa. Llama esta tool 1-3 veces seguidas (una por producto) antes de responder con cualquier texto.",
+    description: "Envía al cliente UNA tarjeta con imagen + nombre + precio + link. OBLIGATORIO usar después de search_products exitosa. Llámalo 1-3 veces seguidas (una por producto) antes de cualquier texto.",
     input_schema: {
       type: "object",
       properties: {
-        title: { type: "string", description: "Nombre del producto" },
-        price: { type: "string", description: "Precio formateado, ej: '$249.900 COP'" },
-        image_url: { type: "string", description: "URL de la imagen del producto" },
-        product_url: { type: "string", description: "URL del producto en ravtoys.com" }
+        title: { type: "string" },
+        price: { type: "string" },
+        image_url: { type: "string" },
+        product_url: { type: "string" }
       },
       required: ["title", "price", "image_url", "product_url"]
     }
   },
   {
     name: "send_store_location",
-    description: "Envía la ubicación de Planet Selva. SOLO cuando el cliente pregunta EXPLÍCITAMENTE por ubicación, dirección, cómo llegar. NUNCA uses como fallback cuando no encuentras productos.",
+    description: "Envía la ubicación de Planet Selva. SOLO cuando el cliente pregunta EXPLÍCITAMENTE por dirección, ubicación, cómo llegar. NUNCA uses como fallback.",
     input_schema: { type: "object", properties: {}, required: [] }
   }
 ];
@@ -249,10 +247,8 @@ async function handleConversation(userId, userMessage) {
   history.push({ role: "user", content: userMessage });
 
   let workingHistory = history.slice(-10);
-  let cardsSentThisTurn = 0;
-  let productsFoundButNotSent = false;
 
-  for (let iteration = 0; iteration < 8; iteration++) {
+  for (let iteration = 0; iteration < 6; iteration++) {
     try {
       const response = await axios.post(
         "https://api.anthropic.com/v1/messages",
@@ -288,15 +284,14 @@ async function handleConversation(userId, userMessage) {
             if (toolUse.name === "search_products") {
               result = await searchShopifyProducts(toolUse.input.query);
               console.log(`Search "${toolUse.input.query}": ${result.products?.length || 0} found`);
-              // FORCING REMINDER: si hay productos, inyectar instrucción obligatoria
+              // Inject forcing reminder into tool_result content
               if (result.products && result.products.length > 0) {
-                productsFoundButNotSent = true;
-                result._system_reminder = "⚠️ ACCIÓN OBLIGATORIA: Ahora DEBES llamar send_product_card para 1-3 de estos productos (los mejores para el cliente). NO respondas con texto hasta haber enviado las tarjetas. Si respondes solo con texto, el cliente no ve nada.";
+                result._instruction = "ACCIÓN OBLIGATORIA: Ahora DEBES llamar send_product_card para 1-3 de estos productos ANTES de responder con texto. No respondas solo texto — el cliente no ve nada.";
+              } else {
+                result._instruction = "No hubo match. Ahora DEBES llamar search_products otra vez con términos distintos (categoría, edad, marca, etc). No respondas con texto todavía.";
               }
             } else if (toolUse.name === "send_product_card") {
               result = await executeSendProductCard(userId, toolUse.input);
-              cardsSentThisTurn++;
-              productsFoundButNotSent = false;
             } else if (toolUse.name === "send_store_location") {
               result = await executeSendStoreLocation(userId);
             } else {
@@ -312,17 +307,6 @@ async function handleConversation(userId, userMessage) {
           });
         }
         workingHistory.push({ role: "user", content: toolResults });
-        continue;
-      }
-
-      // SAFETY NET: si el modelo quiere responder con texto pero hay productos pendientes de enviar
-      if (productsFoundButNotSent && iteration < 7) {
-        console.warn("Safety net: model tried to respond with text but products not sent. Forcing retry.");
-        workingHistory.push({ role: "assistant", content });
-        workingHistory.push({
-          role: "user",
-          content: "🚨 Olvidaste enviar las tarjetas. Llama send_product_card AHORA para los 1-3 mejores productos de la búsqueda anterior. No respondas con texto hasta enviar las tarjetas."
-        });
         continue;
       }
 
@@ -387,7 +371,7 @@ app.get("/", (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV Toys Bot v6 running on port ${PORT}`);
+  console.log(`RAV Toys Bot v7 running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
