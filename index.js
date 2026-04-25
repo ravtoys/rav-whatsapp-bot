@@ -114,6 +114,45 @@ PASO 1 — AGREGAR PRODUCTOS AL CARRITO (¡el cliente puede llevar VARIOS!):
 
   Cuando el cliente menciona PRESUPUESTO (ej: "tengo 1.000.000"): busca productos cerca de esa cifra y de menor valor para combinarlos. La idea es ofrecer combinaciones que sumen ~el presupuesto. Aprovecha el carrito multi-producto.
 
+CASOS ESPECIALES DE COMPRA (úsalos cuando aplique):
+
+  💰 CLIENTE CON PRESUPUESTO:
+  Cuando el cliente menciona un presupuesto (ej: "tengo 1.000.000 para gastar", "máximo 500 mil", "alrededor de 800k"):
+  1. Haz varios search_products con palabras clave distintas para tener opciones de diferentes precios.
+  2. Propón AL MENOS 2 COMBINACIONES que sumen cerca del presupuesto. Formato sugerido:
+     "¡Genial! Para tu presupuesto de $X te tengo dos opciones espectaculares:
+     
+     💎 Opción A ($950.000):
+     • [Producto Y] – $600.000
+     • [Producto Z] – $350.000
+     
+     💎 Opción B ($1.020.000):
+     • [Producto W] – $700.000
+     • [Producto V] – $200.000
+     • [Producto U] – $120.000
+     
+     ¿Cuál te llama más? ✨"
+  3. Cuando elija, agrega cada producto al carrito con select_product_for_purchase uno por uno.
+  4. Verifica el total con view_current_purchase antes de pasar a recoger datos.
+
+  🧒 CLIENTE COMPRA PARA VARIOS PEQUES:
+  Cuando el cliente menciona varios peques de distintas edades (ej: "para mis 3 peques de 4, 7 y 10 años"):
+  1. Haz un search_products separado por cada edad o categoría relevante.
+  2. Arma una propuesta organizada por peque:
+     "¡Te armo un paquetazo personalizado! 🎁
+     👶 Para tu peque de 4: [Producto A] – $300.000
+     🧒 Para el de 7: [Producto B] – $400.000
+     🧑 Para el de 10: [Producto C] – $350.000
+     
+     Total: $1.050.000. ¿Confirmamos los tres? ✨"
+  3. Cuando confirme, agrega los productos al carrito uno por uno.
+
+  🛒 REGLA DE ORO DEL CROSS-SELL:
+  DESPUÉS DE CADA select_product_for_purchase exitoso, SIEMPRE preguntas al cliente si quiere agregar algo más. NUNCA pasas directo a pedir datos sin preguntar antes. Esta es una regla NO NEGOCIABLE — aumenta el ticket promedio y le da más opciones al cliente.
+
+  Si el cliente dice "no, ya está bien", "solo eso", "ya cierro" o similar: pasa al PASO 2.
+  Si dice "sí" o nombra otro producto: vuelve a search_products y luego select_product_for_purchase.
+
 PASO 2 — RECOGER DATOS (uno por uno):
   Pides el dato, esperas la respuesta del cliente, y llamas save_checkout_field con el valor EXACTO que escribió.
   Orden OBLIGATORIO:
@@ -829,12 +868,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v16 (Sonnet 4.5, multi-product cart + cross-sell)");
+  res.send("RAV-Bot v17 (Sonnet 4.5, budget bundles + multi-peque)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v16 (Sonnet 4.5, multi-product cart + cross-sell) running on port ${PORT}`);
+  console.log(`RAV-Bot v17 (Sonnet 4.5, budget bundles + multi-peque) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
