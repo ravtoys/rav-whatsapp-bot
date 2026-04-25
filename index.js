@@ -22,8 +22,6 @@ const conversations = new Map();
 const humanHandoff = new Set();
 const lastSearchResults = new Map();
 const checkouts = new Map();
-const offTopicCounter = new Map();       // userId -> { count, firstTs }
-const offTopicBlocked = new Map();       // userId -> timestamp de desbloqueo
 
 const CHECKOUT_FIELDS = ["nombre", "cedula", "direccion", "telefono", "metodo_pago"];
 
@@ -540,27 +538,6 @@ async function executeHumanHandoff(userId, input) {
 
 // ─── MAIN CONVERSATION LOOP ──────────────────────────────────────────────────
 
-const OFF_TOPIC_LIMIT = 5;
-const OFF_TOPIC_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-
-function incrementOffTopic(userId) {
-  const now = Date.now();
-  const state = offTopicCounter.get(userId) || { count: 0, firstTs: now };
-  if (now - state.firstTs > OFF_TOPIC_COOLDOWN_MS) {
-    state.count = 0;
-    state.firstTs = now;
-  }
-  state.count++;
-  offTopicCounter.set(userId, state);
-  return state.count;
-}
-
-function isBlockedByRateLimit(userId) {
-  const blockedUntil = offTopicBlocked.get(userId);
-  if (!blockedUntil) return false;
-  if (Date.now() > blockedUntil) {
-    offTopicBlocked.delete(userId);
-    offTopicCounter.delete(userId);
     return false;
   }
   return true;
@@ -619,18 +596,6 @@ async function handleConversation(userId, userMessage) {
               case "search_products":
                 result = await executeSearchProducts(userId, toolUse.input);
                 console.log(`Search "${toolUse.input.query}": ${result.products?.length || 0} found`);
-                if (!result.products || result.products.length === 0) {
-                  const count = incrementOffTopic(userId);
-                  console.log(`[OFF-TOPIC COUNT] ${userId}: ${count}/${OFF_TOPIC_LIMIT}`);
-                  if (count >= OFF_TOPIC_LIMIT) {
-                    offTopicBlocked.set(userId, Date.now() + OFF_TOPIC_COOLDOWN_MS);
-                    await sendText(userId, "Disculpa, he estado buscando muchas cosas sin encontrar lo que necesitas 😔 Te dejo un ratito para que revises nuestro catálogo en ravtoys.com y te escribo de vuelta en 24 horas. ¡Si necesitas ayuda urgente, hablemos mañana! 🌴");
-                    console.log(`[RATE LIMIT] User ${userId} blocked for 24h`);
-                    return;
-                  }
-                } else {
-                  offTopicCounter.delete(userId);
-                }
                 break;
               case "send_product_card":
                 result = await executeSendProductCard(userId, toolUse.input);
@@ -752,14 +717,6 @@ app.get("/admin/release/:userId", (req, res) => {
   res.json({ ok: true, userId, wasInHandoff: wasActive });
 });
 
-app.get("/admin/unblock/:userId", (req, res) => {
-  const userId = req.params.userId;
-  const wasBlocked = offTopicBlocked.delete(userId);
-  offTopicCounter.delete(userId);
-  console.log(`[ADMIN] Unblocked ${userId} (was blocked: ${wasBlocked})`);
-  res.json({ ok: true, userId, wasBlocked });
-});
-
 app.get("/admin/reset-checkout/:userId", (req, res) => {
   const userId = req.params.userId;
   const had = checkouts.delete(userId);
@@ -780,12 +737,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v13 (Sonnet 4.5, warmer tone + off-topic rate limit)");
+  res.send("RAV-Bot v14 (Sonnet 4.5, off-topic limit removed)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v13 (Sonnet 4.5, warmer tone + off-topic rate limit) running on port ${PORT}`);
+  console.log(`RAV-Bot v14 (Sonnet 4.5, off-topic limit removed) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
