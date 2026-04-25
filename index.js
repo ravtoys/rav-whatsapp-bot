@@ -20,6 +20,11 @@ if (!ANTHROPIC_API_KEY) { console.error("ANTHROPIC_API_KEY missing"); process.ex
 // ESTADO POR USUARIO
 const conversations = new Map();
 const humanHandoff = new Set();
+const pendingRatings = new Set();
+
+const RATING_REQUEST = `⭐ Antes de despedirnos, ¿cómo te pareció la atención del 1 al 5?
+
+Tu opinión nos ayuda muchísimo a mejorar 💛`;
 const lastSearchResults = new Map();
 const checkouts = new Map();
 
@@ -118,6 +123,13 @@ MEDIOS DE PAGO (info general):
 ENVÍOS:
 - send_shipping_info cuando el cliente pregunte por envíos, cobertura, transportadoras, ciudades, despachos, tiempos de entrega, o "¿llega a mi ciudad?".
 - Si después de send_shipping_info el cliente CONFIRMA que está en Medellín, o pide explícitamente confirmar el tiempo de entrega del mismo día (frases como "sí, soy de Medellín", "yo estoy en Medellín", "confírmame para Medellín", "hoy llega?", "puedo recibirlo hoy?"): pregúntale si quiere que lo pases con una asesora para confirmarle. Si dice que sí, llama request_human_handoff(reason="confirmar_envio_medellin"). Si dice que no o que ya tiene la info, no llames la tool y sigue la conversación normal.
+
+CALIFICACIONES:
+- Cuando el cliente cierra la conversación con frases como "gracias", "listo", "todo bien", "perfecto", "muchas gracias", "buenísimo": llama send_rating_request para pedirle calificar la atención.
+- Cuando recibas la NOTA DEL SISTEMA al inicio de un turno diciendo "Cliente acaba de salir de handoff con humano. Pide calificación.", lo PRIMERO que haces es llamar send_rating_request. Aún si el cliente escribe sobre otra cosa, primero pide la calificación con calidez (ej: "¡Hola otra vez! Antes de seguir, ¿cómo te pareció la atención del 1 al 5? Tu opinión nos ayuda muchísimo 💛").
+- Cuando el cliente responda con un número 1-5 (con o sin comentario), llama save_rating(rating, comment opcional). El sistema te dirá en next_action cómo agradecerle.
+- Si rating <= 3: agradece con calidez Y ofrece pasarlo con un humano para entender qué mejorar (cuando el cliente acepte, llama request_human_handoff(reason="rating_bajo")).
+- NO pidas rating si el cliente está en medio de una compra activa (lleva carrito), garantía o búsqueda. Solo en momentos de cierre o post-handoff.
 
 GARANTÍAS (FLUJO COMPLETO — sigue paso a paso):
 Cuando el cliente menciona producto dañado, defectuoso, cambio, devolución o "tengo garantía":
@@ -274,6 +286,23 @@ const TOOLS = [
     name: "send_shipping_info",
     description: "Envía la información de envíos: cobertura, transportadoras y tiempos de entrega. Úsalo cuando el cliente pregunte por envíos, despachos, cobertura, ciudades, transportadoras, cuánto tarda el pedido, o algo similar.",
     input_schema: { type: "object", properties: {}, required: [] }
+  },
+  {
+    name: "send_rating_request",
+    description: "Envía un mensaje pidiendo al cliente calificar la atención del 1 al 5. Úsalo cuando: (a) el cliente cierra con frases como 'gracias', 'listo', 'todo bien', 'perfecto', 'muchas gracias'; (b) el sistema te indica que el cliente acaba de salir de un handoff con humano. NO lo uses si el cliente está en medio de una compra, búsqueda o garantía.",
+    input_schema: { type: "object", properties: {}, required: [] }
+  },
+  {
+    name: "save_rating",
+    description: "Guarda la calificación del cliente (1 a 5) y notifica al equipo. Llámalo cuando el cliente responda con un número después de send_rating_request. Si dejó comentario, inclúyelo.",
+    input_schema: {
+      type: "object",
+      properties: {
+        rating: { type: "integer", minimum: 1, maximum: 5, description: "Calificación de 1 a 5" },
+        comment: { type: "string", description: "Comentario opcional del cliente" }
+      },
+      required: ["rating"]
+    }
   },
   {
     name: "save_warranty_field",
@@ -537,6 +566,36 @@ async function executeSendShippingInfo(userId) {
   return { sent: true };
 }
 
+async function executeSendRatingRequest(userId) {
+  await sendText(userId, RATING_REQUEST);
+  pendingRatings.add(userId);
+  console.log(`[Rating ${userId}] Request sent`);
+  return { sent: true, next_action: "Espera la respuesta del cliente con un número 1-5. Cuando responda, llama save_rating con el rating y comment opcional." };
+}
+
+async function executeSaveRating(userId, input) {
+  const stars = "⭐".repeat(input.rating) + "☆".repeat(5 - input.rating);
+  const summary = [
+    "📊 *NUEVA CALIFICACIÓN DE ATENCIÓN*",
+    "",
+    `Calificación: ${input.rating}/5  ${stars}`,
+    input.comment ? `Comentario: ${input.comment}` : "(sin comentario)",
+    "",
+    `📱 WhatsApp del cliente: +${userId}`
+  ].join("\n");
+  await notifyTeam(summary, userId);
+  pendingRatings.delete(userId);
+  console.log(`[Rating ${userId}] Saved: ${input.rating}/5${input.comment ? ` - "${input.comment}"` : ""}`);
+  const lowRating = input.rating <= 3;
+  return {
+    saved: true,
+    rating: input.rating,
+    next_action: lowRating
+      ? "Agradece con calidez ('Gracias por tu sinceridad 💛'), pero también ofrece pasarlo con un humano para entender qué podemos mejorar. Si acepta, llama request_human_handoff(reason='rating_bajo')."
+      : "Agradécele al cliente con calidez (algo como '¡Mil gracias por calificarnos! Te esperamos pronto en RAV Toys 🌴💛')."
+  };
+}
+
 async function executeSaveWarrantyField(userId, input) {
   if (!checkouts.has(userId)) checkouts.set(userId, { products: [], data: {} });
   const state = checkouts.get(userId);
@@ -785,7 +844,7 @@ async function handleConversation(userId, userMessage) {
         {
           model: "claude-sonnet-4-5-20250929",
           max_tokens: 1000,
-          system: SYSTEM_PROMPT,
+          system: pendingRatings.has(userId) ? SYSTEM_PROMPT + "\n\n⚠️ NOTA DEL SISTEMA: Cliente acaba de salir de handoff con humano. Pide calificación con send_rating_request ANTES de responder a otra cosa que diga." : SYSTEM_PROMPT,
           tools: TOOLS,
           messages: workingHistory,
         },
@@ -830,6 +889,12 @@ async function handleConversation(userId, userMessage) {
                 break;
               case "send_shipping_info":
                 result = await executeSendShippingInfo(userId);
+                break;
+              case "send_rating_request":
+                result = await executeSendRatingRequest(userId);
+                break;
+              case "save_rating":
+                result = await executeSaveRating(userId, toolUse.input);
                 break;
               case "save_warranty_field":
                 result = await executeSaveWarrantyField(userId, toolUse.input);
@@ -947,6 +1012,7 @@ app.post("/webhook", async (req, res) => {
 app.get("/admin/release/:userId", (req, res) => {
   const userId = req.params.userId;
   const wasActive = humanHandoff.delete(userId);
+  pendingRatings.add(userId);
   console.log(`[ADMIN] Released ${userId} (was handoff: ${wasActive})`);
   res.json({ ok: true, userId, wasInHandoff: wasActive });
 });
@@ -971,12 +1037,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v25 (Sonnet 4.5, Medellin same-day shipping)");
+  res.send("RAV-Bot v26 (Sonnet 4.5, customer satisfaction ratings)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v25 (Sonnet 4.5, Medellin same-day shipping) running on port ${PORT}`);
+  console.log(`RAV-Bot v26 (Sonnet 4.5, customer satisfaction ratings) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
