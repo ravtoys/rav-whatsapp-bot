@@ -64,6 +64,20 @@ const WARRANTY_SHORT = `📋 *Política de garantías RAV Toys*
 
 ¿Me cuentas qué pasó con tu producto? Así te oriento mejor. 🙏`;
 
+const SHIPPING_INFO = `🚚 *Envíos a todo Colombia*
+
+Llevamos los juguetes hasta donde estés ✨ Tenemos cobertura en casi todo el país a través de las principales transportadoras:
+
+• Envia 🚛
+• Coordinadora 📦
+• Servientrega 📮
+• TCC 🛻
+• Interrapidisimo ⚡
+
+⏱️ *Tiempo de entrega:* 2 a 5 días hábiles, según la transportadora y la ciudad de destino.
+
+¿Te gustaría que verifiquemos cobertura en tu ciudad? 🏙️`;
+
 const SYSTEM_PROMPT = `Eres "RAV-Bot", vendedor virtual de RAV Toys (juguetería online en Medellín). Catálogo: ravtoys.com
 
 TONO:
@@ -100,6 +114,9 @@ UBICACIÓN:
 
 MEDIOS DE PAGO (info general):
 - send_payment_info cuando preguntan cómo pagar fuera del checkout.
+
+ENVÍOS:
+- send_shipping_info cuando el cliente pregunte por envíos, cobertura, transportadoras, ciudades, despachos, tiempos de entrega, o "¿llega a mi ciudad?".
 
 GARANTÍAS (FLUJO COMPLETO — sigue paso a paso):
 Cuando el cliente menciona producto dañado, defectuoso, cambio, devolución o "tengo garantía":
@@ -250,7 +267,12 @@ const TOOLS = [
   {
     name: "send_warranty_info",
     description: "Envía el resumen de garantías. Úsalo cuando mencionan producto dañado, cambio, devolución o garantía.",
+    input_schema: { type: "object", properties: {},
+  {
+    name: "send_shipping_info",
+    description: "Envía la información de envíos: cobertura, transportadoras y tiempos de entrega. Úsalo cuando el cliente pregunte por envíos, despachos, cobertura, ciudades, transportadoras, cuánto tarda el pedido, o algo similar.",
     input_schema: { type: "object", properties: {}, required: [] }
+  }, required: [] }
   },
   {
     name: "save_warranty_field",
@@ -506,6 +528,11 @@ async function executeSendPaymentInfo(to) {
 
 async function executeSendWarrantyInfo(to) {
   await sendText(to, WARRANTY_SHORT);
+  return { sent: true };
+}
+
+async function executeSendShippingInfo(userId) {
+  await sendText(userId, SHIPPING_INFO);
   return { sent: true };
 }
 
@@ -800,6 +827,9 @@ async function handleConversation(userId, userMessage) {
               case "send_warranty_info":
                 result = await executeSendWarrantyInfo(userId);
                 break;
+              case "send_shipping_info":
+                result = await executeSendShippingInfo(userId);
+                break;
               case "save_warranty_field":
                 result = await executeSaveWarrantyField(userId, toolUse.input);
                 break;
@@ -940,12 +970,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v23 (Sonnet 4.5, robust notify - errors don't crash flow)");
+  res.send("RAV-Bot v24 (Sonnet 4.5, shipping info)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v23 (Sonnet 4.5, robust notify - errors don't crash flow) running on port ${PORT}`);
+  console.log(`RAV-Bot v24 (Sonnet 4.5, shipping info) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
