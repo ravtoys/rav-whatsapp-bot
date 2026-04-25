@@ -112,7 +112,10 @@ Cuando el cliente menciona producto dañado, defectuoso, cambio, devolución o "
     - fecha_compra: "¿Cuándo compraste el producto? (fecha aproximada)"
     - motivo: "¿Qué pasó con el producto? Cuéntame qué quieres reclamar"
 
-  PASO 3: Cuando tengas los 4 campos, llama notify_warranty_team. El sistema notifica a Eliana y activa el handoff automáticamente. Después dile al cliente algo como "¡Listo! Ya pasé tu caso a nuestra asesora Eliana 🌴 te escribirá en breve para ayudarte 💛"
+  PASO 3: Cuando tengas los 4 campos, llama notify_warranty_team. El resultado incluye next_action que te dirá:
+    1) Generar mensaje al cliente: "¡Listo! Ya pasé tu caso a nuestra asesora Eliana 🌴 Te escribirá pronto para ayudarte 💛"
+    2) Llamar request_human_handoff(reason="garantia") en el MISMO turno.
+  Si NO haces estos dos pasos, el cliente queda sin respuesta y sin handoff. Es OBLIGATORIO completar ambos.
 
   IMPORTANTE: Si el cliente da varios datos en un solo mensaje (ej "factura 1234, cédula 1037..."), llama save_warranty_field varias veces seguidas (una por dato). Si solo da uno, guárdalo y pide el siguiente.
 
@@ -539,9 +542,8 @@ async function executeNotifyWarrantyTeam(userId) {
     "Pendiente: validar condiciones de garantía y dar respuesta al cliente."
   ].join("\n");
   await notifyTeam(summary, userId);
-  console.log(`[Warranty ${userId}] Team notified — handing off`);
-  humanHandoff.add(userId);
-  return { notified: true, handoff_active: true };
+  console.log(`[Warranty ${userId}] Team notified, awaiting handoff`);
+  return { notified: true, next_action: "ACCION OBLIGATORIA INMEDIATA: 1) Dile al cliente algo como '¡Listo! Ya pasé tu caso a nuestra asesora Eliana 🌴 Te escribirá pronto para ayudarte 💛'. 2) Llama request_human_handoff(reason='garantia'). NO termines el turno sin estos dos pasos." };
 }
 
 async function executeSelectProductForPurchase(userId, input) {
@@ -937,12 +939,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v21 (Sonnet 4.5, warranty flow + notify diagnostics)");
+  res.send("RAV-Bot v22 (Sonnet 4.5, warranty handoff fix)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v21 (Sonnet 4.5, warranty flow + notify diagnostics) running on port ${PORT}`);
+  console.log(`RAV-Bot v22 (Sonnet 4.5, warranty handoff fix) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
