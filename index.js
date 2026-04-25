@@ -36,13 +36,14 @@ const STORE_DIRECTIONS = "Estamos en el Parque Comercial El Tesoro en Medellín 
 
 const PAYMENT_INFO = `🏦 *Medios de pago RAV Toys*
 
-*1. Transferencia Bancolombia* 💳
-Cuenta ahorros: 37 938 445 851
-RAV Kids SAS · NIT 900 822 164-1
-
-*2. Datáfono virtual Wompi* 📱
+*1. Datáfono virtual Wompi* 📱 ⭐ _(lo más rápido, cierras ya)_
 Paga con cualquier tarjeta débito o crédito:
 https://checkout.wompi.co/l/iGnSPs
+En el link coloca el valor a pagar y sigue los pasos ✨
+
+*2. Transferencia Bancolombia* 💳
+Cuenta ahorros: 37 938 445 851
+RAV Kids SAS · NIT 900 822 164-1
 
 *3. Contraentrega* 🚚
 Paga en efectivo al recibir. Disponible para compras < $1.450.000.
@@ -120,10 +121,20 @@ PASO 5 — ENVIAR INSTRUCCIONES DE PAGO:
   send_payment_link(method="<transferencia|wompi|contraentrega|addi|supay>")
   (El sistema usa el precio real del producto, tú no pasas monto)
 
-PASO 6 — CONFIRMACIÓN DE PAGO:
-  Cuando el cliente diga "ya pagué", "listo", "transferí" o envíe comprobante:
-  → notify_sale_team (sin argumentos, el sistema arma el resumen con los datos guardados)
-  → request_human_handoff(reason="venta_cerrada")
+PASO 6 — CIERRE DEL PEDIDO (depende del método):
+
+  A) Si método es "wompi" O "transferencia" (cliente paga solo):
+     Esperas a que el cliente diga "ya pagué", "listo", "transferí" o envíe comprobante.
+     CUANDO confirme pago:
+     → notify_sale_team (sin argumentos)
+     → request_human_handoff(reason="venta_cerrada")
+
+  B) Si método es "contraentrega", "addi" O "supay" (requiere coordinación humana):
+     INMEDIATAMENTE después de send_payment_link, sin esperar "ya pagué":
+     → notify_sale_team (sin argumentos)
+     → request_human_handoff(reason="venta_cerrada")
+     Razón: contraentrega requiere logística, y Addi/Sü Pay requieren que un humano
+     envíe el link de solicitud de crédito al cliente.
 
 Si save_checkout_field devuelve error por campo faltante, pide el campo que falta antes de seguir.
 
@@ -716,12 +727,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v11 (Sonnet 4.5, notifications + location fix)");
+  res.send("RAV-Bot v12 (Sonnet 4.5, differentiated payment flows)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v11 (Sonnet 4.5, notifications + location fix) running on port ${PORT}`);
+  console.log(`RAV-Bot v12 (Sonnet 4.5, differentiated payment flows) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
