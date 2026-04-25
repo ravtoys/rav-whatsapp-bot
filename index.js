@@ -673,10 +673,6 @@ async function handleConversation(userId, userMessage) {
     console.log(`[HANDOFF ACTIVE] Ignoring message from ${userId}`);
     return;
   }
-  if (isBlockedByRateLimit(userId)) {
-    console.log(`[RATE LIMIT] User ${userId} is blocked`);
-    return;
-  }
 
   if (!conversations.has(userId)) conversations.set(userId, []);
   const history = conversations.get(userId);
@@ -868,12 +864,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v17 (Sonnet 4.5, budget bundles + multi-peque)");
+  res.send("RAV-Bot v18 (hotfix: removed orphan rate limit reference)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v17 (Sonnet 4.5, budget bundles + multi-peque) running on port ${PORT}`);
+  console.log(`RAV-Bot v18 (hotfix: removed orphan rate limit reference) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
