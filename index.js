@@ -18,10 +18,12 @@ if (!WA_TOKEN) { console.error("WA_TOKEN missing"); process.exit(1); }
 if (!ANTHROPIC_API_KEY) { console.error("ANTHROPIC_API_KEY missing"); process.exit(1); }
 
 // ESTADO POR USUARIO
-const conversations = new Map();         // userId -> [ { role, content } ]
-const humanHandoff = new Set();          // userIds cuyo chat pasó a humano
-const lastSearchResults = new Map();     // userId -> [ productos ]
-const checkouts = new Map();             // userId -> { product, data: { nombre, cedula, direccion, telefono, metodo_pago } }
+const conversations = new Map();
+const humanHandoff = new Set();
+const lastSearchResults = new Map();
+const checkouts = new Map();
+const offTopicCounter = new Map();       // userId -> { count, firstTs }
+const offTopicBlocked = new Map();       // userId -> timestamp de desbloqueo
 
 const CHECKOUT_FIELDS = ["nombre", "cedula", "direccion", "telefono", "metodo_pago"];
 
@@ -66,10 +68,11 @@ const WARRANTY_SHORT = `📋 *Política de garantías RAV Toys*
 const SYSTEM_PROMPT = `Eres "RAV-Bot", vendedor virtual de RAV Toys (juguetería online en Medellín). Catálogo: ravtoys.com
 
 TONO:
-- Respuestas cortas (1-2 líneas máx).
-- Saludas con energía: "¡Hola! Soy RAV-Bot 🎉 Bienvenido a RAV Toys ¿En qué te ayudo?"
+- Respuestas cortas (1-2 líneas máx) pero SIEMPRE cálidas y amables.
+- Saludas con energía: "Hola soy RAV-Bot 🤖 Te doy la bienvenida a RAV Toys, la juguetería más cool del mundo entero y sus alrededores 🌎 ¿En qué te ayudo?"
 - Usas "peque" para los niños.
 - Cercano, chévere, entusiasta. Vendedor TOP, nunca pasivo.
+- Si el cliente manda algo ambiguo ("?", emoji solo, mensaje corto confuso) o audio: responde con calidez ("¡Hola! 😊 Dime en qué te puedo ayudar con tus juguetes RAV Toys" / "No puedo escuchar audio 😊 Pero cuéntame por texto qué buscas y te ayudo encantado"). SIEMPRE redirige a algo de RAV Toys, nunca ofrezcas ayuda fuera del contexto RAV.
 
 PRODUCTOS:
 - Llama search_products con términos cortos (2-4 palabras).
@@ -537,9 +540,39 @@ async function executeHumanHandoff(userId, input) {
 
 // ─── MAIN CONVERSATION LOOP ──────────────────────────────────────────────────
 
+const OFF_TOPIC_LIMIT = 5;
+const OFF_TOPIC_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+function incrementOffTopic(userId) {
+  const now = Date.now();
+  const state = offTopicCounter.get(userId) || { count: 0, firstTs: now };
+  if (now - state.firstTs > OFF_TOPIC_COOLDOWN_MS) {
+    state.count = 0;
+    state.firstTs = now;
+  }
+  state.count++;
+  offTopicCounter.set(userId, state);
+  return state.count;
+}
+
+function isBlockedByRateLimit(userId) {
+  const blockedUntil = offTopicBlocked.get(userId);
+  if (!blockedUntil) return false;
+  if (Date.now() > blockedUntil) {
+    offTopicBlocked.delete(userId);
+    offTopicCounter.delete(userId);
+    return false;
+  }
+  return true;
+}
+
 async function handleConversation(userId, userMessage) {
   if (humanHandoff.has(userId)) {
     console.log(`[HANDOFF ACTIVE] Ignoring message from ${userId}`);
+    return;
+  }
+  if (isBlockedByRateLimit(userId)) {
+    console.log(`[RATE LIMIT] User ${userId} is blocked`);
     return;
   }
 
@@ -586,6 +619,18 @@ async function handleConversation(userId, userMessage) {
               case "search_products":
                 result = await executeSearchProducts(userId, toolUse.input);
                 console.log(`Search "${toolUse.input.query}": ${result.products?.length || 0} found`);
+                if (!result.products || result.products.length === 0) {
+                  const count = incrementOffTopic(userId);
+                  console.log(`[OFF-TOPIC COUNT] ${userId}: ${count}/${OFF_TOPIC_LIMIT}`);
+                  if (count >= OFF_TOPIC_LIMIT) {
+                    offTopicBlocked.set(userId, Date.now() + OFF_TOPIC_COOLDOWN_MS);
+                    await sendText(userId, "Disculpa, he estado buscando muchas cosas sin encontrar lo que necesitas 😔 Te dejo un ratito para que revises nuestro catálogo en ravtoys.com y te escribo de vuelta en 24 horas. ¡Si necesitas ayuda urgente, hablemos mañana! 🌴");
+                    console.log(`[RATE LIMIT] User ${userId} blocked for 24h`);
+                    return;
+                  }
+                } else {
+                  offTopicCounter.delete(userId);
+                }
                 break;
               case "send_product_card":
                 result = await executeSendProductCard(userId, toolUse.input);
@@ -707,6 +752,14 @@ app.get("/admin/release/:userId", (req, res) => {
   res.json({ ok: true, userId, wasInHandoff: wasActive });
 });
 
+app.get("/admin/unblock/:userId", (req, res) => {
+  const userId = req.params.userId;
+  const wasBlocked = offTopicBlocked.delete(userId);
+  offTopicCounter.delete(userId);
+  console.log(`[ADMIN] Unblocked ${userId} (was blocked: ${wasBlocked})`);
+  res.json({ ok: true, userId, wasBlocked });
+});
+
 app.get("/admin/reset-checkout/:userId", (req, res) => {
   const userId = req.params.userId;
   const had = checkouts.delete(userId);
@@ -727,12 +780,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v12 (Sonnet 4.5, differentiated payment flows)");
+  res.send("RAV-Bot v13 (Sonnet 4.5, warmer tone + off-topic rate limit)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v12 (Sonnet 4.5, differentiated payment flows) running on port ${PORT}`);
+  console.log(`RAV-Bot v13 (Sonnet 4.5, warmer tone + off-topic rate limit) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
