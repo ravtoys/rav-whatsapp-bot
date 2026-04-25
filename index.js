@@ -24,6 +24,7 @@ const lastSearchResults = new Map();
 const checkouts = new Map();
 
 const CHECKOUT_FIELDS = ["nombre", "cedula", "direccion", "telefono", "metodo_pago"];
+const WARRANTY_FIELDS = ["factura_pedido", "cedula_nit", "fecha_compra", "motivo"];
 
 const STORE = {
   name: "🌴 RAV Toys – Planet Selva",
@@ -100,8 +101,20 @@ UBICACIÓN:
 MEDIOS DE PAGO (info general):
 - send_payment_info cuando preguntan cómo pagar fuera del checkout.
 
-GARANTÍAS:
-- send_warranty_info cuando mencionan producto dañado, cambio o devolución.
+GARANTÍAS (FLUJO COMPLETO — sigue paso a paso):
+Cuando el cliente menciona producto dañado, defectuoso, cambio, devolución o "tengo garantía":
+
+  PASO 1: Llama send_warranty_info para enviarle la política. Después dile algo cálido como "Para ayudarte con tu garantía necesito unos datos rapidito 🙏". NUNCA pases a humano sin recoger los datos primero.
+
+  PASO 2: Pide UNO POR UNO (en este orden) y por cada respuesta llama save_warranty_field con el field correcto:
+    - factura_pedido: "¿Me das tu número de factura o pedido?"
+    - cedula_nit: "¿A nombre de qué cédula o NIT está la compra?"
+    - fecha_compra: "¿Cuándo compraste el producto? (fecha aproximada)"
+    - motivo: "¿Qué pasó con el producto? Cuéntame qué quieres reclamar"
+
+  PASO 3: Cuando tengas los 4 campos, llama notify_warranty_team. El sistema notifica a Eliana y activa el handoff automáticamente. Después dile al cliente algo como "¡Listo! Ya pasé tu caso a nuestra asesora Eliana 🌴 te escribirá en breve para ayudarte 💛"
+
+  IMPORTANTE: Si el cliente da varios datos en un solo mensaje (ej "factura 1234, cédula 1037..."), llama save_warranty_field varias veces seguidas (una por dato). Si solo da uno, guárdalo y pide el siguiente.
 
 ═══════════════════════════════════════
 CIERRE DE VENTA (FLUJO ESTRICTO)
@@ -234,6 +247,23 @@ const TOOLS = [
   {
     name: "send_warranty_info",
     description: "Envía el resumen de garantías. Úsalo cuando mencionan producto dañado, cambio, devolución o garantía.",
+    input_schema: { type: "object", properties: {}, required: [] }
+  },
+  {
+    name: "save_warranty_field",
+    description: "Guarda un dato del flujo de reclamación de garantía. Llámalo cada vez que el cliente provea su número de factura/pedido, cédula/NIT, fecha de compra, o motivo. Una llamada por dato.",
+    input_schema: {
+      type: "object",
+      properties: {
+        field: { type: "string", enum: ["factura_pedido", "cedula_nit", "fecha_compra", "motivo"], description: "Cuál dato de garantía estás guardando" },
+        value: { type: "string", description: "Valor exacto que dio el cliente" }
+      },
+      required: ["field", "value"]
+    }
+  },
+  {
+    name: "notify_warranty_team",
+    description: "Envía resumen de la reclamación al equipo y pasa a humano (Eliana). Llámalo SOLO después de tener los 4 campos: factura_pedido, cedula_nit, fecha_compra y motivo.",
     input_schema: { type: "object", properties: {}, required: [] }
   },
   {
@@ -432,6 +462,9 @@ async function notifyTeam(text, excludePhone) {
       console.log(`Skipped self-notification to ${phone} (is current customer)`);
       continue;
     }
+    if (excludePhone) {
+      console.log(`[NOTIFY DEBUG] phone="${phone}" excludePhone="${excludePhone}" eq=${phone === excludePhone} lenP=${phone.length} lenE=${excludePhone.length}`);
+    }
     await sendText(phone, text);
     sent++;
   }
@@ -470,6 +503,45 @@ async function executeSendPaymentInfo(to) {
 async function executeSendWarrantyInfo(to) {
   await sendText(to, WARRANTY_SHORT);
   return { sent: true };
+}
+
+async function executeSaveWarrantyField(userId, input) {
+  if (!checkouts.has(userId)) checkouts.set(userId, { products: [], data: {} });
+  const state = checkouts.get(userId);
+  if (!state.warranty) state.warranty = {};
+  state.warranty[input.field] = input.value;
+  checkouts.set(userId, state);
+  const missing = WARRANTY_FIELDS.filter(f => !state.warranty[f]);
+  console.log(`[Warranty ${userId}] Saved ${input.field}=${input.value}. Missing: ${missing.join(",") || "none"}`);
+  return { saved: input.field, value: input.value, missing_fields: missing };
+}
+
+async function executeNotifyWarrantyTeam(userId) {
+  const state = checkouts.get(userId);
+  if (!state || !state.warranty) {
+    return { error: "No hay datos de garantía. Usa save_warranty_field primero." };
+  }
+  const missing = WARRANTY_FIELDS.filter(f => !state.warranty[f]);
+  if (missing.length > 0) {
+    return { error: "Faltan datos: " + missing.join(", ") + ". Pídelos antes de notificar." };
+  }
+  const w = state.warranty;
+  const summary = [
+    "🛠️ *NUEVA RECLAMACIÓN DE GARANTÍA*",
+    "",
+    "📄 Factura/Pedido: " + w.factura_pedido,
+    "🆔 Cédula/NIT: " + w.cedula_nit,
+    "📅 Fecha de compra: " + w.fecha_compra,
+    "❓ Motivo: " + w.motivo,
+    "",
+    "📱 WhatsApp del cliente: +" + userId,
+    "",
+    "Pendiente: validar condiciones de garantía y dar respuesta al cliente."
+  ].join("\n");
+  await notifyTeam(summary, userId);
+  console.log(`[Warranty ${userId}] Team notified — handing off`);
+  humanHandoff.add(userId);
+  return { notified: true, handoff_active: true };
 }
 
 async function executeSelectProductForPurchase(userId, input) {
@@ -725,6 +797,12 @@ async function handleConversation(userId, userMessage) {
               case "send_warranty_info":
                 result = await executeSendWarrantyInfo(userId);
                 break;
+              case "save_warranty_field":
+                result = await executeSaveWarrantyField(userId, toolUse.input);
+                break;
+              case "notify_warranty_team":
+                result = await executeNotifyWarrantyTeam(userId);
+                break;
               case "select_product_for_purchase":
                 result = await executeSelectProductForPurchase(userId, toolUse.input);
                 break;
@@ -859,12 +937,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v20 (Sonnet 4.5, sequential redirect + empathy + clean URLs)");
+  res.send("RAV-Bot v21 (Sonnet 4.5, warranty flow + notify diagnostics)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v20 (Sonnet 4.5, sequential redirect + empathy + clean URLs) running on port ${PORT}`);
+  console.log(`RAV-Bot v21 (Sonnet 4.5, warranty flow + notify diagnostics) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
