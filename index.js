@@ -465,11 +465,12 @@ async function notifyTeam(text, excludePhone) {
       console.log(`Skipped self-notification to ${phone} (is current customer)`);
       continue;
     }
-    if (excludePhone) {
-      console.log(`[NOTIFY DEBUG] phone="${phone}" excludePhone="${excludePhone}" eq=${phone === excludePhone} lenP=${phone.length} lenE=${excludePhone.length}`);
+    try {
+      await sendText(phone, text);
+      sent++;
+    } catch (err) {
+      console.log(`[NOTIFY] Failed to send to ${phone}: ${err.message || err}. Continuing with rest.`);
     }
-    await sendText(phone, text);
-    sent++;
   }
   console.log(`Notified team (${sent}/${NOTIFICATION_PHONES.length} numbers)`);
 }
@@ -939,12 +940,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v22 (Sonnet 4.5, warranty handoff fix)");
+  res.send("RAV-Bot v23 (Sonnet 4.5, robust notify - errors don't crash flow)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v22 (Sonnet 4.5, warranty handoff fix) running on port ${PORT}`);
+  console.log(`RAV-Bot v23 (Sonnet 4.5, robust notify - errors don't crash flow) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
