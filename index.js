@@ -76,7 +76,7 @@ Llevamos los juguetes hasta donde estés ✨ Tenemos cobertura en casi todo el p
 
 ⏱️ *Tiempo de entrega:* 2 a 5 días hábiles, según la transportadora y la ciudad de destino.
 
-¿Te gustaría que verifiquemos cobertura en tu ciudad? 🏙️`;
+🌴 *¿Estás en Medellín?* ¡Buenas noticias! La mayoría de las veces entregamos el *mismo día* 🚀 Si quieres confirmar el tiempo exacto para tu pedido, dime y te paso con una asesora 💛`;
 
 const SYSTEM_PROMPT = `Eres "RAV-Bot", vendedor virtual de RAV Toys (juguetería online en Medellín). Catálogo: ravtoys.com
 
@@ -117,6 +117,7 @@ MEDIOS DE PAGO (info general):
 
 ENVÍOS:
 - send_shipping_info cuando el cliente pregunte por envíos, cobertura, transportadoras, ciudades, despachos, tiempos de entrega, o "¿llega a mi ciudad?".
+- Si después de send_shipping_info el cliente CONFIRMA que está en Medellín, o pide explícitamente confirmar el tiempo de entrega del mismo día (frases como "sí, soy de Medellín", "yo estoy en Medellín", "confírmame para Medellín", "hoy llega?", "puedo recibirlo hoy?"): pregúntale si quiere que lo pases con una asesora para confirmarle. Si dice que sí, llama request_human_handoff(reason="confirmar_envio_medellin"). Si dice que no o que ya tiene la info, no llames la tool y sigue la conversación normal.
 
 GARANTÍAS (FLUJO COMPLETO — sigue paso a paso):
 Cuando el cliente menciona producto dañado, defectuoso, cambio, devolución o "tengo garantía":
@@ -970,12 +971,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v24.1 (Sonnet 4.5, shipping info hotfix)");
+  res.send("RAV-Bot v25 (Sonnet 4.5, Medellin same-day shipping)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v24.1 (Sonnet 4.5, shipping info hotfix) running on port ${PORT}`);
+  console.log(`RAV-Bot v25 (Sonnet 4.5, Medellin same-day shipping) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
