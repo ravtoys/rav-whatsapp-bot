@@ -122,22 +122,20 @@ PASO 5 — ENVIAR INSTRUCCIONES DE PAGO:
   send_payment_link(method="<transferencia|wompi|contraentrega|addi|supay>")
   (El sistema usa el precio real del producto, tú no pasas monto)
 
-PASO 6 — CIERRE DEL PEDIDO (depende del método):
+  El resultado de send_payment_link incluye next_action — SIGUE ESA INSTRUCCIÓN AL PIE DE LA LETRA.
 
-  A) Si método es "wompi" O "transferencia" (cliente paga solo):
-     Esperas a que el cliente diga "ya pagué", "listo", "transferí" o envíe comprobante.
-     CUANDO confirme pago:
-     → notify_sale_team (sin argumentos)
-     → request_human_handoff(reason="venta_cerrada")
+PASO 6 — SEGÚN EL MÉTODO:
 
-  B) Si método es "contraentrega", "addi" O "supay" (requiere coordinación humana):
-     INMEDIATAMENTE después de send_payment_link, sin esperar "ya pagué":
-     → notify_sale_team (sin argumentos)
-     → request_human_handoff(reason="venta_cerrada")
-     Razón: contraentrega requiere logística, y Addi/Sü Pay requieren que un humano
-     envíe el link de solicitud de crédito al cliente.
+  ⭐ WOMPI o TRANSFERENCIA (automatizados):
+  Después de send_payment_link, espera silenciosamente a que el cliente diga "ya pagué", "listo", "transferí" o mande comprobante. Cuando confirme:
+  → Llama notify_sale_team (sin argumentos)
+  → Llama request_human_handoff(reason="venta_cerrada")
 
-Si save_checkout_field devuelve error por campo faltante, pide el campo que falta antes de seguir.
+  CONTRAENTREGA, ADDI o SÜ PAY (requieren humano para cerrar):
+  INMEDIATAMENTE después de send_payment_link, en EL MISMO TURNO:
+  → Llama notify_sale_team (sin argumentos)
+  → Llama request_human_handoff(reason="venta_metodo_manual")
+  No esperes confirmación del cliente. El humano del equipo seguirá la conversación.
 
 ═══════════════════════════════════════
 
@@ -484,7 +482,12 @@ async function executeSendPaymentLink(userId, input) {
   }
   await sendText(userId, msg);
   console.log(`[Checkout ${userId}] Payment link sent: ${input.method} for ${amount}`);
-  return { sent: true, method: input.method, amount };
+  const automatedMethods = ["wompi", "transferencia"];
+  const isAutomated = automatedMethods.includes(input.method);
+  const next_action = isAutomated
+    ? "Espera silenciosamente a que el cliente confirme el pago ('ya pagué', 'listo', 'transferí'). Cuando confirme, llama notify_sale_team y luego request_human_handoff(reason='venta_cerrada')."
+    : "ACCION OBLIGATORIA INMEDIATA EN ESTE MISMO TURNO: llama notify_sale_team (sin argumentos) y luego request_human_handoff(reason='venta_metodo_manual'). NO esperes que el cliente diga nada. El humano continuará.";
+  return { sent: true, method: input.method, amount, automated: isAutomated, next_action };
 }
 
 async function executeNotifyTeam(userId) {
@@ -733,12 +736,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v14 (Sonnet 4.5, off-topic limit removed)");
+  res.send("RAV-Bot v15 (Sonnet 4.5, differentiated payment flow)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v14 (Sonnet 4.5, off-topic limit removed) running on port ${PORT}`);
+  console.log(`RAV-Bot v15 (Sonnet 4.5, differentiated payment flow) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
