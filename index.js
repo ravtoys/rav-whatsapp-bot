@@ -98,9 +98,21 @@ CIERRE DE VENTA (FLUJO ESTRICTO)
 ═══════════════════════════════════════
 Cuando el cliente indique que quiere comprar ("lo quiero", "me lo llevo", "hagamos el pedido", "cómo lo compro"):
 
-PASO 1 — SELECCIONAR PRODUCTO:
+PASO 1 — AGREGAR PRODUCTOS AL CARRITO (¡el cliente puede llevar VARIOS!):
   Llama select_product_for_purchase con el product_url EXACTO del producto elegido (debe ser un product_url que apareció en search_products previo).
-  El sistema confirma el producto Y SU PRECIO REAL. TÚ NO DECIDES EL PRECIO. Si el cliente pregunta cuánto, mira el precio de la tarjeta enviada.
+  El sistema confirma el producto Y SU PRECIO REAL. TÚ NO DECIDES EL PRECIO ni sumas totales — el sistema lo hace.
+
+  🛒 CROSS-SELL OBLIGATORIO: Después de cada select_product_for_purchase, el resultado incluye next_action que te dirá que preguntes al cliente si quiere agregar algo más. SIEMPRE pregunta esto. Ejemplos:
+  - "¡Genial! 🎉 ¿Quieres agregar otro juguete a tu pedido?"
+  - "¿Le agregamos algo más para tu peque? Tenemos cosas espectaculares"
+  - "¿Algo más para llevar? Si quieres ver lo que llevas en el carrito, dime y te lo confirmo"
+
+  Si dice SÍ → busca con search_products → llama select_product_for_purchase otra vez (se acumula).
+  Si dice NO o "ya está bien" → procede al PASO 2.
+  En cualquier momento puedes llamar view_current_purchase para confirmar el carrito y total.
+  Si quiere quitar algo → remove_product_from_purchase con el product_url.
+
+  Cuando el cliente menciona PRESUPUESTO (ej: "tengo 1.000.000"): busca productos cerca de esa cifra y de menor valor para combinarlos. La idea es ofrecer combinaciones que sumen ~el presupuesto. Aprovecha el carrito multi-producto.
 
 PASO 2 — RECOGER DATOS (uno por uno):
   Pides el dato, esperas la respuesta del cliente, y llamas save_checkout_field con el valor EXACTO que escribió.
@@ -197,6 +209,22 @@ const TOOLS = [
       type: "object",
       properties: {
         product_url: { type: "string", description: "product_url EXACTO del producto elegido (debe venir de un search_products previo)" }
+      },
+      required: ["product_url"]
+    }
+  },
+  {
+    name: "view_current_purchase",
+    description: "Devuelve la lista actual de productos en el carrito del cliente con el total. Úsalo para confirmar al cliente lo que lleva antes de cerrar la compra, o cuando dice 'qué llevo' o 'cuánto va'.",
+    input_schema: { type: "object", properties: {}, required: [] }
+  },
+  {
+    name: "remove_product_from_purchase",
+    description: "Quita UN producto del carrito por su product_url. Úsalo si el cliente cambia de opinión sobre algo que ya había agregado.",
+    input_schema: {
+      type: "object",
+      properties: {
+        product_url: { type: "string", description: "product_url EXACTO del producto a quitar" }
       },
       required: ["product_url"]
     }
@@ -419,17 +447,64 @@ async function executeSelectProductForPurchase(userId, input) {
       available_urls: products.map(p => p.product_url)
     };
   }
-  if (!checkouts.has(userId)) checkouts.set(userId, { data: {} });
+  if (!checkouts.has(userId)) checkouts.set(userId, { products: [], data: {} });
   const state = checkouts.get(userId);
-  state.product = chosen;
+  if (!state.products) state.products = [];
+  // Si ya está en el carrito, no duplicar
+  const existing = state.products.find(p => p.product_url === chosen.product_url);
+  if (existing) {
+    const total = state.products.reduce((sum, p) => sum + (p.price_amount || 0), 0);
+    return {
+      already_in_cart: true,
+      title: chosen.title,
+      cart_count: state.products.length,
+      cart_total: `${total.toLocaleString("es-CO")} ${state.products[0].currency}`,
+      next_action: "Avísale al cliente que ese producto ya está en el carrito y pregunta si quiere agregar otra cosa."
+    };
+  }
+  state.products.push(chosen);
   checkouts.set(userId, state);
-  console.log(`[Checkout ${userId}] Product selected: ${chosen.title} @ ${chosen.price} (${chosen.price_amount} ${chosen.currency})`);
+  const total = state.products.reduce((sum, p) => sum + (p.price_amount || 0), 0);
+  console.log(`[Checkout ${userId}] Added: ${chosen.title} @ ${chosen.price}. Cart now: ${state.products.length} items, total ${total}`);
   return {
-    selected: true,
+    added: true,
     title: chosen.title,
     price: chosen.price,
-    available: chosen.available,
-    stock: chosen.stock
+    cart_count: state.products.length,
+    cart_total: `${total.toLocaleString("es-CO")} ${state.products[0].currency}`,
+    next_action: "Pregunta al cliente si quiere agregar algo más a su pedido. Algo como '¡Genial! ¿Quieres agregar otro juguete a tu pedido?'. Si dice que sí, busca otra cosa. Si dice que no, procede a recoger los datos del cliente."
+  };
+}
+
+async function executeViewCurrentPurchase(userId) {
+  const state = checkouts.get(userId);
+  if (!state || !state.products || state.products.length === 0) {
+    return { empty: true, message: "El cliente aún no ha seleccionado productos." };
+  }
+  const total = state.products.reduce((sum, p) => sum + (p.price_amount || 0), 0);
+  return {
+    products: state.products.map(p => ({ title: p.title, price: p.price, product_url: p.product_url })),
+    count: state.products.length,
+    total: `${total.toLocaleString("es-CO")} ${state.products[0].currency}`
+  };
+}
+
+async function executeRemoveProductFromPurchase(userId, input) {
+  const state = checkouts.get(userId);
+  if (!state || !state.products || state.products.length === 0) {
+    return { error: "No hay productos en el carrito." };
+  }
+  const idx = state.products.findIndex(p => p.product_url === input.product_url);
+  if (idx === -1) return { error: "Ese producto no está en el carrito." };
+  const removed = state.products.splice(idx, 1)[0];
+  checkouts.set(userId, state);
+  const total = state.products.reduce((sum, p) => sum + (p.price_amount || 0), 0);
+  console.log(`[Checkout ${userId}] Removed: ${removed.title}. Cart now: ${state.products.length} items`);
+  return {
+    removed: true,
+    title: removed.title,
+    remaining: state.products.length,
+    cart_total: state.products.length > 0 ? `${total.toLocaleString("es-CO")} ${state.products[0].currency}` : "$0"
   };
 }
 
@@ -437,9 +512,9 @@ async function executeSaveCheckoutField(userId, input) {
   if (!checkouts.has(userId)) checkouts.set(userId, { data: {} });
   const state = checkouts.get(userId);
   if (!state.data) state.data = {};
-  if (!state.product) {
+  if (!state.products || state.products.length === 0) {
     return {
-      error: "No hay producto seleccionado. Primero llama select_product_for_purchase con el producto que el cliente quiere comprar."
+      error: "No hay productos en el carrito. Primero llama select_product_for_purchase con el producto que el cliente quiere comprar."
     };
   }
   state.data[input.field] = input.value;
@@ -456,10 +531,12 @@ async function executeSaveCheckoutField(userId, input) {
 
 async function executeSendPaymentLink(userId, input) {
   const state = checkouts.get(userId);
-  if (!state || !state.product) {
-    return { error: "No hay producto seleccionado. Llama select_product_for_purchase primero." };
+  if (!state || !state.products || state.products.length === 0) {
+    return { error: "No hay productos en el carrito. Llama select_product_for_purchase primero." };
   }
-  const amount = state.product.price;
+  const totalAmount = state.products.reduce((sum, p) => sum + (p.price_amount || 0), 0);
+  const currency = state.products[0].currency || "COP";
+  const amount = `${totalAmount.toLocaleString("es-CO")} ${currency}`;
   let msg;
   switch (input.method) {
     case "transferencia":
@@ -492,7 +569,7 @@ async function executeSendPaymentLink(userId, input) {
 
 async function executeNotifyTeam(userId) {
   const state = checkouts.get(userId);
-  if (!state || !state.product) {
+  if (!state || !state.products || state.products.length === 0) {
     return { error: "No hay checkout completo para notificar." };
   }
   const missing = CHECKOUT_FIELDS.filter(f => !state.data?.[f]);
@@ -500,13 +577,17 @@ async function executeNotifyTeam(userId) {
     return { error: "Faltan campos del cliente: " + missing.join(", ") + ". Pídelos antes de notificar al equipo." };
   }
   const d = state.data;
-  const p = state.product;
+  const totalAmount = state.products.reduce((sum, p) => sum + (p.price_amount || 0), 0);
+  const currency = state.products[0].currency || "COP";
+  const formattedTotal = `${totalAmount.toLocaleString("es-CO")} ${currency}`;
+  const productsList = state.products.map((p, i) => `  ${i+1}. ${p.title} — ${p.price}\n     ${p.product_url}`).join("\n");
   const summary = [
     "🚨 *NUEVA VENTA CERRADA* 🎉",
     "",
-    "📦 Producto: " + p.title,
-    "💰 Precio: " + p.price,
-    "🔗 " + p.product_url,
+    `📦 Productos (${state.products.length}):`,
+    productsList,
+    "",
+    `💰 *TOTAL: ${formattedTotal}*`,
     "",
     "👤 *Datos del cliente*",
     "Nombre: " + d.nombre,
@@ -520,8 +601,8 @@ async function executeNotifyTeam(userId) {
     "Pendiente: confirmar pago y despachar pedido."
   ].join("\n");
   await notifyTeam(summary, userId);
-  console.log(`[Checkout ${userId}] Team notified for sale of ${p.title}`);
-  return { notified: true, team_size: NOTIFICATION_PHONES.length };
+  console.log(`[Checkout ${userId}] Team notified — ${state.products.length} products, total ${formattedTotal}`);
+  return { notified: true, team_size: NOTIFICATION_PHONES.length, products_count: state.products.length };
 }
 
 async function executeHumanHandoff(userId, input) {
@@ -529,8 +610,14 @@ async function executeHumanHandoff(userId, input) {
   const reason = input.reason || "solicitud_cliente";
   const state = checkouts.get(userId);
   let notif = `🚨 *Handoff a humano*\nCliente: +${userId}\nMotivo: ${reason}\n\n`;
-  if (state?.product && reason !== "venta_cerrada") {
-    notif += `(Producto en checkout: ${state.product.title} @ ${state.product.price})\n\n`;
+  if (state?.products && state.products.length > 0 && reason !== "venta_cerrada") {
+    if (state.products.length === 1) {
+      notif += `(Producto en checkout: ${state.products[0].title} @ ${state.products[0].price})\n\n`;
+    } else {
+      const total = state.products.reduce((sum, p) => sum + (p.price_amount || 0), 0);
+      const currency = state.products[0].currency || "COP";
+      notif += `(En checkout: ${state.products.length} productos · Total: ${total.toLocaleString("es-CO")} ${currency})\n\n`;
+    }
   }
   notif += "Toma el control en WhatsApp Business.";
   await notifyTeam(notif, userId);
@@ -610,6 +697,12 @@ async function handleConversation(userId, userMessage) {
                 break;
               case "select_product_for_purchase":
                 result = await executeSelectProductForPurchase(userId, toolUse.input);
+                break;
+              case "view_current_purchase":
+                result = await executeViewCurrentPurchase(userId);
+                break;
+              case "remove_product_from_purchase":
+                result = await executeRemoveProductFromPurchase(userId, toolUse.input);
                 break;
               case "save_checkout_field":
                 result = await executeSaveCheckoutField(userId, toolUse.input);
@@ -727,8 +820,8 @@ app.get("/admin/status", (req, res) => {
     activeHandoffs: [...humanHandoff],
     activeCheckouts: [...checkouts.entries()].map(([k, v]) => ({
       userId: k,
-      product: v.product?.title,
-      price: v.product?.price,
+      products: v.products?.map(p => ({title: p.title, price: p.price})) || [],
+      total_amount: (v.products || []).reduce((sum, p) => sum + (p.price_amount || 0), 0),
       data: v.data
     })),
     conversationCount: conversations.size,
@@ -736,12 +829,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v15 (Sonnet 4.5, differentiated payment flow)");
+  res.send("RAV-Bot v16 (Sonnet 4.5, multi-product cart + cross-sell)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v15 (Sonnet 4.5, differentiated payment flow) running on port ${PORT}`);
+  console.log(`RAV-Bot v16 (Sonnet 4.5, multi-product cart + cross-sell) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
