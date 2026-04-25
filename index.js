@@ -538,10 +538,6 @@ async function executeHumanHandoff(userId, input) {
 
 // ─── MAIN CONVERSATION LOOP ──────────────────────────────────────────────────
 
-    return false;
-  }
-  return true;
-}
 
 async function handleConversation(userId, userMessage) {
   if (humanHandoff.has(userId)) {
