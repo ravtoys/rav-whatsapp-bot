@@ -267,12 +267,12 @@ const TOOLS = [
   {
     name: "send_warranty_info",
     description: "Envía el resumen de garantías. Úsalo cuando mencionan producto dañado, cambio, devolución o garantía.",
-    input_schema: { type: "object", properties: {},
+    input_schema: { type: "object", properties: {}, required: [] }
+  },
   {
     name: "send_shipping_info",
     description: "Envía la información de envíos: cobertura, transportadoras y tiempos de entrega. Úsalo cuando el cliente pregunte por envíos, despachos, cobertura, ciudades, transportadoras, cuánto tarda el pedido, o algo similar.",
     input_schema: { type: "object", properties: {}, required: [] }
-  }, required: [] }
   },
   {
     name: "save_warranty_field",
@@ -970,12 +970,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v24 (Sonnet 4.5, shipping info)");
+  res.send("RAV-Bot v24.1 (Sonnet 4.5, shipping info hotfix)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v24 (Sonnet 4.5, shipping info) running on port ${PORT}`);
+  console.log(`RAV-Bot v24.1 (Sonnet 4.5, shipping info hotfix) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
