@@ -489,7 +489,7 @@ async function searchShopifyProducts(query) {
       };
     });
 
-    const inStock = products.filter(p => p.available && p.stock > 0);
+    const inStock = products.filter(p => p.available !== false);
 
 
     return { products: inStock, count: inStock.length };
@@ -1074,12 +1074,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v28 (Sonnet 4.5, take-the-order CTA + multimedia handling)");
+  res.send("RAV-Bot v28.1 (Sonnet 4.5, fix stock filter false negatives)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v28 (Sonnet 4.5, take-the-order CTA + multimedia handling) running on port ${PORT}`);
+  console.log(`RAV-Bot v28.1 (Sonnet 4.5, fix stock filter false negatives) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
