@@ -102,7 +102,8 @@ Ejemplos del tono que queremos:
 NO uses frases frías como "No entiendo tu mensaje", "Procesa de nuevo", "Solicitud no válida", "No es posible". El cliente debe sentir que le estás dando lo mejor de ti.
 
 PRODUCTOS:
-- LIMITE DURO: máximo 2 search_products por turno (para no saturar).
+- LIMITE DURO INFLEXIBLE: máximo 1 search_products POR TURNO. Una sola llamada con términos buenos. NO repitas búsquedas en el mismo turno aunque los resultados no sean perfectos. Usa los productos que sí encontraste y ofrécelos.
+- Si search_products devuelve 0 resultados: NO busques otra vez. Sé honesto con el cliente — dile algo como "No encontré exactamente eso 🙈 ¿Me describes con otras palabras qué buscas?" y ESPERA su respuesta. No improvises búsquedas.
 - Llama search_products con términos cortos (2-4 palabras).
 - Si hay resultados, llama send_product_card 1-3 veces con los datos EXACTOS que devolvió search_products. NO inventes.
 - Mensaje corto con gancho: "¡Tengo estas joyas! ¿Cuál te late?"
@@ -177,8 +178,8 @@ CASOS ESPECIALES DE COMPRA:
   🧒 VARIOS PEQUES: Si menciona varios peques de distintas edades, haz UNA búsqueda por la edad principal y sugiere uno por cada edad.
 
   🌐 FLUJO DE RECOMENDACIÓN — 3 opciones + link de búsqueda específica (HAZLO SIEMPRE así):
-  PASO 1: Cuando el cliente pida productos, llama search_products con términos cortos y relevantes (ej: "carro control remoto", "muñeca 3 años", "lego niña").
-  PASO 2: Selecciona las 3 MEJORES opciones de los resultados (las más relevantes a lo que el cliente busca y con stock) y envíalas con send_product_card una por una. Si search_products devuelve menos de 3, envía las que haya. Si devuelve cero, sé honesto y di que no encontraste exactamente eso pero ofrece alternativas.
+  PASO 1: Cuando el cliente pida productos, llama search_products UNA SOLA VEZ con términos cortos y relevantes (ej: "carro control remoto", "muñeca 3 años", "lego niña"). Una sola llamada, sin repetir.
+  PASO 2: De los resultados, toma máximo 3 productos (los primeros que estén con stock) y envíalos con send_product_card uno por uno. Si hay menos de 3 con stock, envía los que haya. Si hay 0 resultados: NO busques de nuevo, sé honesto con el cliente.
   PASO 3: Después de enviar los productos, manda un mensaje cálido con el link de búsqueda específico al CATÁLOGO de la web. Formato del link: https://ravtoys.com/search?q=PALABRA_CLAVE (reemplaza PALABRA_CLAVE con los mismos términos clave que usaste en search_products, separados por +). Ejemplos:
     - Cliente busca "carro control remoto" → link: https://ravtoys.com/search?q=carro+control+remoto
     - Cliente busca "lego para niña 6 años" → link: https://ravtoys.com/search?q=lego+ni%C3%B1a (los acentos van encodificados: ñ=%C3%B1, á=%C3%A1, é=%C3%A9, í=%C3%AD, ó=%C3%B3, ú=%C3%BA)
@@ -853,6 +854,8 @@ async function handleConversation(userId, userMessage) {
 
   let workingHistory = history.slice(-12);
 
+  let searchedThisTurn = false;
+  let lastSearchResultsThisTurn = null;
   for (let iteration = 0; iteration < 8; iteration++) {
     try {
       const response = await axios.post(
@@ -888,8 +891,15 @@ async function handleConversation(userId, userMessage) {
           try {
             switch (toolUse.name) {
               case "search_products":
-                result = await executeSearchProducts(userId, toolUse.input);
-                console.log(`Search "${toolUse.input.query}": ${result.products?.length || 0} found`);
+                if (searchedThisTurn) {
+                  console.log(`[Cap ${userId}] Blocking second search_products in same turn. Reusing previous results.`);
+                  result = lastSearchResultsThisTurn || { products: [], note: "Ya buscaste este turno. Usa los resultados anteriores y respóndele al cliente, no busques otra vez." };
+                } else {
+                  result = await executeSearchProducts(userId, toolUse.input);
+                  console.log(`Search "${toolUse.input.query}": ${result.products?.length || 0} found`);
+                  searchedThisTurn = true;
+                  lastSearchResultsThisTurn = result;
+                }
                 break;
               case "send_product_card":
                 result = await executeSendProductCard(userId, toolUse.input);
@@ -1053,12 +1063,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v27 (Sonnet 4.5, smart 3 options + specific search link)");
+  res.send("RAV-Bot v27.1 (Sonnet 4.5, hard cap 1 search per turn)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v27 (Sonnet 4.5, smart 3 options + specific search link) running on port ${PORT}`);
+  console.log(`RAV-Bot v27.1 (Sonnet 4.5, hard cap 1 search per turn) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
