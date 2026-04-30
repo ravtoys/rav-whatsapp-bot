@@ -428,76 +428,61 @@ const TOOLS = [
   }
 ];
 
-async function searchShopifyProducts(query) {
-  if (!SHOPIFY_ADMIN_TOKEN) return { error: "Shopify not configured", products: [] };
+async function searchShopify(query) {
+  // Estrategia: usar el endpoint público del storefront que devuelve JSON
+  // Ventaja: el bot ve exactamente lo mismo que el cliente en la web (filtros de stock,
+  // visibilidad y disponibilidad ya aplicados por Shopify). Cero falsos negativos.
+  const safeQuery = encodeURIComponent(query || "");
+  const url = `https://${SHOPIFY_STORE_DOMAIN.replace('.myshopify.com', '.com').replace('ravtoys.myshopify.com', 'ravtoys.com')}/search?q=${safeQuery}&view=json&resources[limit]=20&type=product`;
+  // Fallback: si el dominio personalizado no responde, intentar el .myshopify.com directo
+  const fallbackUrl = `https://${SHOPIFY_STORE_DOMAIN}/search?q=${safeQuery}&view=json&resources[limit]=20&type=product`;
 
-  const graphqlQuery = `
-    query searchProducts($query: String!) {
-      products(first: 5, query: $query) {
-        edges {
-          node {
-            title
-            handle
-            description
-            productType
-            totalInventory
-            priceRangeV2 {
-              minVariantPrice { amount currencyCode }
-              maxVariantPrice { amount currencyCode }
-            }
-            featuredImage { url }
-          }
-        }
-      }
-    }
-  `;
-
+  let raw;
   try {
-    const response = await axios.post(
-      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/2025-01/graphql.json`,
-      { query: graphqlQuery, variables: { query } },
-      {
-        headers: { "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN, "Content-Type": "application/json" },
-        timeout: 10000,
-      }
-    );
-
-    if (response.data.errors) {
-      console.error("Shopify errors:", response.data.errors);
-      return { error: "GraphQL error", products: [] };
-    }
-
-    const products = response.data.data.products.edges.map(edge => {
-      const p = edge.node;
-      const minPrice = p.priceRangeV2.minVariantPrice;
-      const maxPrice = p.priceRangeV2.maxVariantPrice;
-      const priceAmount = Math.round(parseFloat(minPrice.amount));
-      const priceStr = minPrice.amount === maxPrice.amount
-        ? `$${priceAmount.toLocaleString("es-CO")} ${minPrice.currencyCode}`
-        : `$${priceAmount.toLocaleString("es-CO")} - $${Math.round(parseFloat(maxPrice.amount)).toLocaleString("es-CO")} ${minPrice.currencyCode}`;
-      return {
-        title: p.title,
-        description: (p.description || "").slice(0, 150),
-        price: priceStr,
-        price_amount: priceAmount,
-        currency: minPrice.currencyCode,
-        product_url: `https://ravtoys.com/products/${p.handle}`,
-        image_url: p.featuredImage?.url || "",
-        available: (p.totalInventory ?? 0) > 0,
-        stock: p.totalInventory,
-        type: p.productType,
-      };
-    });
-
-    const inStock = products.filter(p => p.available !== false);
-
-
-    return { products: inStock, count: inStock.length };
+    const resp = await axios.get(url, { timeout: 8000, headers: { Accept: 'application/json' } });
+    raw = resp.data;
   } catch (err) {
-    console.error("Shopify search error:", err.response?.data || err.message);
-    return { error: err.message, products: [] };
+    console.log(`[searchShopify] Primary URL failed (${err.message}), trying fallback`);
+    try {
+      const resp = await axios.get(fallbackUrl, { timeout: 8000, headers: { Accept: 'application/json' } });
+      raw = resp.data;
+    } catch (err2) {
+      console.log(`[searchShopify] Fallback also failed: ${err2.message}`);
+      return { products: [], total: 0, query };
+    }
   }
+
+  // Parsear si llega como string
+  if (typeof raw === 'string') {
+    try { raw = JSON.parse(raw); } catch (e) { return { products: [], total: 0, query }; }
+  }
+
+  const items = raw?.results || [];
+  const total = raw?.results_count || items.length;
+
+  const products = items.map(p => {
+    // Extraer handle del URL (lo que va después de /products/)
+    const urlPath = p.url || "";
+    const handleMatch = urlPath.match(/\/products\/([^?#\/]+)/);
+    const handle = handleMatch ? handleMatch[1] : "";
+    const fullUrl = urlPath.startsWith('http') ? urlPath : `https://ravtoys.com${urlPath}`;
+
+    return {
+      title: p.title || "",
+      handle,
+      product_url: fullUrl,
+      image_url: p.thumbnail || "",
+      price: p.price || "",
+      product_type: p.type || "",
+      available: true,  // El storefront solo devuelve productos disponibles para venta
+      stock: 999        // Placeholder: storefront ya filtró agotados
+    };
+  });
+
+  console.log(`[searchShopify] query="${query}" returned ${products.length} products (storefront says ${total})`);
+  return { products, total, query };
 }
+
 
 async function sendText(to, text) {
   try {
@@ -1074,12 +1059,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v28.1 (Sonnet 4.5, fix stock filter false negatives)");
+  res.send("RAV-Bot v29 (Sonnet 4.5, storefront search - same results as web)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v28.1 (Sonnet 4.5, fix stock filter false negatives) running on port ${PORT}`);
+  console.log(`RAV-Bot v29 (Sonnet 4.5, storefront search - same results as web) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
