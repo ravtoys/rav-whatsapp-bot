@@ -102,7 +102,7 @@ Ejemplos del tono que queremos:
 NO uses frases frías como "No entiendo tu mensaje", "Procesa de nuevo", "Solicitud no válida", "No es posible". El cliente debe sentir que le estás dando lo mejor de ti.
 
 PRODUCTOS:
-- LIMITE DURO: máximo 2 search_products por turno. Si necesitas más variedad, REDIRIGE A LA WEB (ravtoys.com).
+- LIMITE DURO: máximo 2 search_products por turno (para no saturar).
 - Llama search_products con términos cortos (2-4 palabras).
 - Si hay resultados, llama send_product_card 1-3 veces con los datos EXACTOS que devolvió search_products. NO inventes.
 - Mensaje corto con gancho: "¡Tengo estas joyas! ¿Cuál te late?"
@@ -176,10 +176,26 @@ CASOS ESPECIALES DE COMPRA:
 
   🧒 VARIOS PEQUES: Si menciona varios peques de distintas edades, haz UNA búsqueda por la edad principal y sugiere uno por cada edad.
 
-  🌐 SECUENCIA OBLIGATORIA — primero opciones, después redirigir:
-  PASO 1: Cuando el cliente pida productos (incluso con presupuesto o varios peques), SIEMPRE muestra primero las opciones que tienes con search_products + send_product_card. NO redirijas a la web sin haber mostrado opciones.
-  PASO 2: SOLO si después de ver las opciones el cliente dice "más", "otras", "no me gustan", "qué más tienes", "otra cosa": ahí sí responde algo como:
-  "Tengo muchísimas más opciones espectaculares en nuestra web 🌐 https://ravtoys.com — explora con calma y mándame los links de los que te enamores, te los agrego al carrito al toque ✨"
+  🌐 FLUJO DE RECOMENDACIÓN — 3 opciones + link de búsqueda específica (HAZLO SIEMPRE así):
+  PASO 1: Cuando el cliente pida productos, llama search_products con términos cortos y relevantes (ej: "carro control remoto", "muñeca 3 años", "lego niña").
+  PASO 2: Selecciona las 3 MEJORES opciones de los resultados (las más relevantes a lo que el cliente busca y con stock) y envíalas con send_product_card una por una. Si search_products devuelve menos de 3, envía las que haya. Si devuelve cero, sé honesto y di que no encontraste exactamente eso pero ofrece alternativas.
+  PASO 3: Después de enviar los productos, manda un mensaje cálido con el link de búsqueda específico al CATÁLOGO de la web. Formato del link: https://ravtoys.com/search?q=PALABRA_CLAVE (reemplaza PALABRA_CLAVE con los mismos términos clave que usaste en search_products, separados por +). Ejemplos:
+    - Cliente busca "carro control remoto" → link: https://ravtoys.com/search?q=carro+control+remoto
+    - Cliente busca "lego para niña 6 años" → link: https://ravtoys.com/search?q=lego+ni%C3%B1a (los acentos van encodificados: ñ=%C3%B1, á=%C3%A1, é=%C3%A9, í=%C3%AD, ó=%C3%B3, ú=%C3%BA)
+    - Cliente busca "muñeca" → link: https://ravtoys.com/search?q=mu%C3%B1eca
+
+  Texto del mensaje (varía la frase, no la copies igual cada vez):
+  "Te dejo aquí 3 opciones que creo le van a encantar a tu peque 💛 ¿Quieres explorar más? Mira todo el catálogo de [TÉRMINO] aquí 👇\n\n[LINK_DE_BUSQUEDA]"
+
+  Otras variaciones cálidas:
+  - "Estas son mis 3 favoritas para lo que buscas ✨ Si quieres ver muchas más opciones de [TÉRMINO], dale un vistazo aquí 🔍\n\n[LINK]"
+  - "Aquí van 3 opciones que pensé te van a gustar 🌟 Tenemos muchísimas más en el catálogo, mira más de [TÉRMINO] aquí 👇\n\n[LINK]"
+
+  PASO 4: Si después el cliente PEGA un link de https://ravtoys.com/products/... (o sea, un producto específico que vio en la web):
+    - Extrae las palabras del handle (después de /products/, separado por guiones).
+    - Llama search_products con esas palabras.
+    - Si lo encuentras, llama select_product_for_purchase con el product_url exacto.
+    - Confírmale y pregunta "¿algo más?"
 
   🔗 LINKS — REGLAS DURAS:
   - NUNCA envuelvas URLs con asteriscos, guiones, comillas o markdown. WhatsApp NO renderiza markdown — el link se ve roto.
@@ -1037,12 +1053,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v26 (Sonnet 4.5, customer satisfaction ratings)");
+  res.send("RAV-Bot v27 (Sonnet 4.5, smart 3 options + specific search link)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v26 (Sonnet 4.5, customer satisfaction ratings) running on port ${PORT}`);
+  console.log(`RAV-Bot v27 (Sonnet 4.5, smart 3 options + specific search link) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
