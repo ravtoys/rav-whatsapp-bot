@@ -5,6 +5,7 @@ const app = express();
 app.use(express.json());
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────────
+const BOT_VERSION = "v32.1";  // bump cada release; usado por endpoints /admin/*
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "rav_toys_webhook_2026";
 const WA_TOKEN = process.env.WA_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID || "999846293222612";
@@ -1107,7 +1108,7 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v32 (Sonnet 4.5, credit alert + search cache + structured logger)");
+  res.send("RAV-Bot v32.1 (Sonnet 4.5, BOT_VERSION centralized + endpoints fix)");
 });
 
 const PORT = process.env.PORT || 3000;
@@ -1117,7 +1118,7 @@ const PORT = process.env.PORT || 3000;
 // créditos de Anthropic. Útil antes de hacer pruebas o deploys.
 app.get("/admin/health", async (req, res) => {
   const result = {
-    bot: { version: "v31", uptime_seconds: Math.round(process.uptime()) },
+    bot: { version: BOT_VERSION, uptime_seconds: Math.round(process.uptime()) },
     env: {
       anthropic_key_present: !!ANTHROPIC_API_KEY,
       shopify_token_present: !!SHOPIFY_ADMIN_TOKEN,
@@ -1168,7 +1169,7 @@ app.get("/admin/stats", (req, res) => {
     has_warranty: !!(cart.warranty && Object.keys(cart.warranty).length > 0)
   }));
   res.json({
-    bot_version: "v31",
+    bot_version: BOT_VERSION,
     timestamp: new Date().toISOString(),
     summary: {
       active_handoffs: humanHandoff.size,
@@ -1210,7 +1211,7 @@ app.get("/admin/test-search", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v32 (Sonnet 4.5, credit alert + search cache + structured logger) running on port ${PORT}`);
+  console.log(`RAV-Bot v32.1 (Sonnet 4.5, BOT_VERSION centralized + endpoints fix) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
