@@ -21,6 +21,8 @@ if (!ANTHROPIC_API_KEY) { console.error("ANTHROPIC_API_KEY missing"); process.ex
 const conversations = new Map();
 const humanHandoff = new Set();
 const pendingRatings = new Set();
+let lastCreditAlert = 0;  // timestamp del último aviso de saldo bajo (anti-spam)
+const searchCache = new Map();  // {query: {result, ts}} — evita búsquedas duplicadas en <5min
 
 const RATING_REQUEST = `⭐ Antes de despedirnos, ¿cómo te pareció la atención del 1 al 5?
 
@@ -429,6 +431,20 @@ const TOOLS = [
 ];
 
 async function searchShopify(query) {
+  // CACHE (v32): si la misma query se buscó hace <5min, reusar resultado.
+  // Ahorra llamadas a Shopify y mejora velocidad. Auto-limpia cada llamada.
+  const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
+  const now = Date.now();
+  const cached = searchCache.get(query);
+  if (cached && (now - cached.ts) < CACHE_TTL_MS) {
+    log("info", "search_cache_hit", { query, age_seconds: Math.round((now - cached.ts) / 1000), products: cached.result.products.length });
+    return cached.result;
+  }
+  // Limpiar entries viejas (>10 min) para no acumular memoria
+  for (const [k, v] of searchCache.entries()) {
+    if ((now - v.ts) > 10 * 60 * 1000) searchCache.delete(k);
+  }
+
   // Estrategia: usar el endpoint público del storefront que devuelve JSON
   // Ventaja: el bot ve exactamente lo mismo que el cliente en la web (filtros de stock,
   // visibilidad y disponibilidad ya aplicados por Shopify). Cero falsos negativos.
@@ -480,7 +496,9 @@ async function searchShopify(query) {
   });
 
   console.log(`[searchShopify] query="${query}" returned ${products.length} products (storefront says ${total})`);
-  return { products, total, query };
+  const result = { products, total, query };
+  searchCache.set(query, { result, ts: Date.now() });
+  return result;
 }
 
 
@@ -520,6 +538,16 @@ async function sendLocation(to, lat, lng, name, address) {
     );
   } catch (err) {
     console.error("WA location error:", err.response?.data?.error || err.message);
+  }
+}
+
+// Logger estructurado (v32) — formato JSON para futura integración con servicios externos
+function log(level, event, data = {}) {
+  const entry = { ts: new Date().toISOString(), level, event, ...data };
+  if (level === 'error') {
+    console.error(JSON.stringify(entry));
+  } else {
+    console.log(JSON.stringify(entry));
   }
 }
 
@@ -978,6 +1006,23 @@ async function handleConversation(userId, userMessage) {
       return;
     } catch (err) {
       console.error("Claude error:", err.response?.data || err.message);
+            // Detectar credit_balance_too_low y alertar al equipo (anti-spam: 1 cada 30 min)
+            try {
+              const errType = err.response?.data?.error?.type;
+              const errMsg = err.response?.data?.error?.message || "";
+              const isCreditErr = errType === "invalid_request_error" && /credit|balance/i.test(errMsg);
+              if (isCreditErr) {
+                const now = Date.now();
+                const THIRTY_MIN = 30 * 60 * 1000;
+                if (now - lastCreditAlert > THIRTY_MIN) {
+                  lastCreditAlert = now;
+                  log("warn", "credit_balance_low_alert", { errMsg });
+                  await notifyTeam("⚠️ ALERTA: Saldo de Anthropic agotado. El bot no puede responder a clientes hasta recargar.\n\nRecarga: https://platform.claude.com/settings/billing", null);
+                }
+              }
+            } catch (alertErr) {
+              console.error("Failed to send credit alert:", alertErr.message);
+            }
       await sendText(userId, "Ups, tuve un problemita técnico 😅 ¿Puedes repetir?");
       return;
     }
@@ -1062,7 +1107,7 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v31 (Sonnet 4.5, admin endpoints: health+stats+test-search)");
+  res.send("RAV-Bot v32 (Sonnet 4.5, credit alert + search cache + structured logger)");
 });
 
 const PORT = process.env.PORT || 3000;
@@ -1165,7 +1210,7 @@ app.get("/admin/test-search", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v31 (Sonnet 4.5, admin endpoints: health+stats+test-search) running on port ${PORT}`);
+  console.log(`RAV-Bot v32 (Sonnet 4.5, credit alert + search cache + structured logger) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
