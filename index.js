@@ -1062,12 +1062,110 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v30 (Sonnet 4.5, prompt caching + history 8 = -85% input cost)");
+  res.send("RAV-Bot v31 (Sonnet 4.5, admin endpoints: health+stats+test-search)");
 });
 
 const PORT = process.env.PORT || 3000;
+
+// ─── ADMIN ENDPOINTS (added in v31 — observability + safety net) ────
+// Health check: verifica que dependencias externas respondan, sin gastar
+// créditos de Anthropic. Útil antes de hacer pruebas o deploys.
+app.get("/admin/health", async (req, res) => {
+  const result = {
+    bot: { version: "v31", uptime_seconds: Math.round(process.uptime()) },
+    env: {
+      anthropic_key_present: !!ANTHROPIC_API_KEY,
+      shopify_token_present: !!SHOPIFY_ADMIN_TOKEN,
+      wa_token_present: !!WA_TOKEN,
+      phone_number_id: PHONE_NUMBER_ID,
+      shopify_domain: SHOPIFY_STORE_DOMAIN,
+      notification_phones_count: NOTIFICATION_PHONES.length
+    },
+    state: {
+      active_handoffs: humanHandoff.size,
+      pending_ratings: pendingRatings.size,
+      active_checkouts: checkouts.size,
+      conversations_in_memory: conversations.size,
+      last_search_results_cached: lastSearchResults.size
+    },
+    checks: {}
+  };
+  // Probar Shopify storefront search (gratis, no consume saldo)
+  try {
+    const r = await axios.get(`https://ravtoys.com/search?q=test&view=json&resources[limit]=1&type=product`, { timeout: 5000 });
+    result.checks.shopify_storefront = r.status === 200 ? "ok" : `status_${r.status}`;
+  } catch (e) {
+    result.checks.shopify_storefront = `error: ${e.message}`;
+  }
+  // Probar Meta WhatsApp API (verifica que el token siga válido)
+  try {
+    const r = await axios.get(`https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}`, {
+      headers: { Authorization: `Bearer ${WA_TOKEN}` },
+      timeout: 5000
+    });
+    result.checks.meta_whatsapp = r.status === 200 ? "ok" : `status_${r.status}`;
+  } catch (e) {
+    result.checks.meta_whatsapp = `error: ${e.response?.data?.error?.message || e.message}`;
+  }
+  result.checks.shopify_admin_api = SHOPIFY_ADMIN_TOKEN ? "key_present_not_tested" : "missing_key";
+  result.checks.anthropic_api = ANTHROPIC_API_KEY ? "key_present_not_tested_to_save_credits" : "missing_key";
+  res.json(result);
+});
+
+// Stats: snapshot del estado actual del bot.
+// No requiere instrumentación pesada — muestra solo lo que tenemos en memoria.
+app.get("/admin/stats", (req, res) => {
+  const handoffsList = Array.from(humanHandoff.values());
+  const pendingList = Array.from(pendingRatings.values());
+  const checkoutsList = Array.from(checkouts.entries()).map(([userId, cart]) => ({
+    user: userId,
+    products: cart.products?.length || 0,
+    has_warranty: !!(cart.warranty && Object.keys(cart.warranty).length > 0)
+  }));
+  res.json({
+    bot_version: "v31",
+    timestamp: new Date().toISOString(),
+    summary: {
+      active_handoffs: humanHandoff.size,
+      pending_ratings: pendingRatings.size,
+      active_carts: checkouts.size,
+      conversations_in_memory: conversations.size
+    },
+    active_handoff_users: handoffsList,
+    pending_rating_users: pendingList,
+    active_checkouts: checkoutsList,
+    note: "Stats are in-memory only. They reset when the bot restarts (free tier sleeps after 15min)."
+  });
+});
+
+// Test search: yo (Claude) lo uso ANTES de avisarte que cambios de búsqueda
+// están listos. Te permite verificar tú mismo abriendo una URL.
+app.get("/admin/test-search", async (req, res) => {
+  const q = req.query.q || "";
+  if (!q) {
+    res.status(400).json({ error: "Missing query param: ?q=..." });
+    return;
+  }
+  try {
+    const result = await searchShopify(q);
+    res.json({
+      query: q,
+      total: result.total,
+      products_returned: result.products.length,
+      products: result.products.map(p => ({
+        title: p.title,
+        price: p.price,
+        product_url: p.product_url,
+        product_type: p.product_type
+      }))
+    });
+  } catch (e) {
+    res.status(500).json({ query: q, error: e.message });
+  }
+});
+
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v30 (Sonnet 4.5, prompt caching + history 8 = -85% input cost) running on port ${PORT}`);
+  console.log(`RAV-Bot v31 (Sonnet 4.5, admin endpoints: health+stats+test-search) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
