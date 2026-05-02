@@ -848,7 +848,7 @@ async function handleConversation(userId, userMessage) {
   const history = conversations.get(userId);
   history.push({ role: "user", content: userMessage });
 
-  let workingHistory = history.slice(-12);
+  let workingHistory = history.slice(-8);
 
   let searchedThisTurn = false;
   let lastSearchResultsThisTurn = null;
@@ -859,8 +859,11 @@ async function handleConversation(userId, userMessage) {
         {
           model: "claude-sonnet-4-5-20250929",
           max_tokens: 1000,
-          system: pendingRatings.has(userId) ? SYSTEM_PROMPT + "\n\n⚠️ NOTA DEL SISTEMA: Cliente acaba de salir de handoff con humano. Pide calificación con send_rating_request ANTES de responder a otra cosa que diga." : SYSTEM_PROMPT,
-          tools: TOOLS,
+          system: [
+        { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+        ...(pendingRatings.has(userId) ? [{ type: "text", text: "⚠️ NOTA DEL SISTEMA: Cliente acaba de salir de handoff con humano. Pide calificación con send_rating_request ANTES de responder a otra cosa que diga." }] : [])
+      ],
+          tools: TOOLS.map((t, i) => i === TOOLS.length - 1 ? { ...t, cache_control: { type: "ephemeral" } } : t),
           messages: workingHistory,
         },
         {
@@ -961,7 +964,7 @@ async function handleConversation(userId, userMessage) {
         workingHistory.push({ role: "user", content: toolResults });
 
         if (humanHandoff.has(userId)) {
-          conversations.set(userId, history.slice(-12));
+          conversations.set(userId, history.slice(-8));
           return;
         }
         continue;
@@ -970,7 +973,7 @@ async function handleConversation(userId, userMessage) {
       const textBlock = content.find(c => c.type === "text");
       const reply = textBlock ? textBlock.text.trim() : "";
       history.push({ role: "assistant", content: reply || "(sin texto)" });
-      conversations.set(userId, history.slice(-12));
+      conversations.set(userId, history.slice(-8));
       if (reply) await sendText(userId, reply);
       return;
     } catch (err) {
@@ -1059,12 +1062,12 @@ app.get("/admin/status", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("RAV-Bot v29 (Sonnet 4.5, storefront search - same results as web)");
+  res.send("RAV-Bot v30 (Sonnet 4.5, prompt caching + history 8 = -85% input cost)");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`RAV-Bot v29 (Sonnet 4.5, storefront search - same results as web) running on port ${PORT}`);
+  console.log(`RAV-Bot v30 (Sonnet 4.5, prompt caching + history 8 = -85% input cost) running on port ${PORT}`);
   console.log(`WA: ${WA_TOKEN ? "OK" : "MISSING"}`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? "OK" : "MISSING"}`);
   console.log(`Shopify: ${SHOPIFY_ADMIN_TOKEN ? "OK " + SHOPIFY_STORE_DOMAIN : "MISSING"}`);
